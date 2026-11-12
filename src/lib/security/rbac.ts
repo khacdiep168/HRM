@@ -114,7 +114,6 @@ const ROLE_PERMISSIONS: Record<RoleCode, Partial<Record<ModuleCode, readonly Act
     ASSETS: ["READ"],
     ESS: ["READ"],
     WORKFLOW: ["READ", "APPROVE"],
-    ADMIN_AUDIT: ["READ"],
   },
   ACCOUNTANT: {
     EMPLOYEE: ["READ"],

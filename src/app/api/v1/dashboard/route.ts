@@ -6,7 +6,10 @@ export async function GET() {
   try {
     const auth = await resolveAuthContext();
     if (!auth) {
-      return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Chưa đăng nhập" } }, { status: 401 });
+      return NextResponse.json(
+        { error: { code: "UNAUTHORIZED", message: "Chưa đăng nhập" } },
+        { status: 401 }
+      );
     }
 
     const admin = getSupabaseAdminClient();
@@ -17,31 +20,166 @@ export async function GET() {
       .single();
 
     if (!company) {
-      return NextResponse.json({ error: { code: "NOT_FOUND", message: "Không tìm thấy công ty" } }, { status: 404 });
+      return NextResponse.json(
+        { error: { code: "NOT_FOUND", message: "Không tìm thấy công ty" } },
+        { status: 404 }
+      );
     }
 
+    const isExecOrHr = auth.roles.some((r) =>
+      ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR"].includes(r)
+    );
+    const isManager = !isExecOrHr && auth.roles.includes("DEPARTMENT_MANAGER");
+
+    // 1. EMPLOYEE SCOPE: Strictly self-only metrics (no company totals, no other employees)
+    if (!isExecOrHr && !isManager) {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      if (!auth.employeeId) {
+        return NextResponse.json({
+          data: {
+            scope: "EMPLOYEE",
+            company,
+            selfMetrics: {
+              todayCheckins: 0,
+              monthWorkDays: 0,
+              remainingLeaveDays: 0,
+              pendingRequests: 0,
+              latestNetPay: null,
+            },
+          },
+        });
+      }
+
+      const [
+        { count: todayCheckins },
+        { data: attRows },
+        { data: leaveBal },
+        { count: myPendingLeave },
+        { count: myPendingOt },
+        { data: myPayslips },
+      ] = await Promise.all([
+        admin
+          .from("attendance_raw_events")
+          .select("id", { count: "exact", head: true })
+          .eq("employee_id", auth.employeeId)
+          .gte("event_time", `${todayIso}T00:00:00`),
+        admin
+          .from("attendance_summaries")
+          .select("actual_work_days")
+          .eq("employee_id", auth.employeeId)
+          .order("updated_at", { ascending: false })
+          .limit(1),
+        admin
+          .from("leave_balances")
+          .select("remaining_days")
+          .eq("employee_id", auth.employeeId),
+        admin
+          .from("leave_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("employee_id", auth.employeeId)
+          .eq("status", "PENDING"),
+        admin
+          .from("overtime_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("employee_id", auth.employeeId)
+          .eq("status", "PENDING"),
+        admin
+          .from("payroll_results")
+          .select("net_payable")
+          .eq("employee_id", auth.employeeId)
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
+
+      const remainingLeaveDays = (leaveBal ?? []).reduce(
+        (sum, b) => sum + Number(b.remaining_days ?? 0),
+        0
+      );
+
+      return NextResponse.json({
+        data: {
+          scope: "EMPLOYEE",
+          company,
+          selfMetrics: {
+            todayCheckins: todayCheckins ?? 0,
+            monthWorkDays: Number(attRows?.[0]?.actual_work_days ?? 0),
+            remainingLeaveDays,
+            pendingRequests: (myPendingLeave ?? 0) + (myPendingOt ?? 0),
+            latestNetPay:
+              myPayslips?.[0]?.net_payable !== undefined
+                ? Number(myPayslips[0].net_payable)
+                : null,
+          },
+        },
+      });
+    }
+
+    // 2. MANAGER SCOPE: Team/approval metrics only (no company payroll fund or audit logs)
+    if (isManager) {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const [
+        { count: pendingLeave },
+        { count: pendingOvertime },
+        { count: pendingExceptions },
+        { data: todayEvents },
+      ] = await Promise.all([
+        admin
+          .from("leave_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", company.id)
+          .eq("status", "PENDING"),
+        admin
+          .from("overtime_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", company.id)
+          .eq("status", "PENDING"),
+        admin
+          .from("attendance_exceptions")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "PENDING"),
+        admin
+          .from("attendance_raw_events")
+          .select("employee_id")
+          .gte("event_time", `${todayIso}T00:00:00`),
+      ]);
+
+      const presentToday = new Set(
+        (todayEvents ?? []).map((e) => e.employee_id).filter(Boolean)
+      ).size;
+
+      return NextResponse.json({
+        data: {
+          scope: "MANAGER",
+          company,
+          managerMetrics: {
+            presentToday,
+            pendingLeave: pendingLeave ?? 0,
+            pendingOvertime: pendingOvertime ?? 0,
+            pendingExceptions: pendingExceptions ?? 0,
+            totalPendingApprovals:
+              (pendingLeave ?? 0) + (pendingOvertime ?? 0) + (pendingExceptions ?? 0),
+          },
+        },
+      });
+    }
+
+    // 3. EXEC / HR / ACCOUNTANT / AUDITOR SCOPE: Full 6-KPI operational dashboard
+    const todayIso = new Date().toISOString().slice(0, 10);
     const [
       employeesRes,
-      orgRes,
       leavePendingRes,
       otPendingRes,
+      excPendingRes,
       contractsRes,
       payrollRes,
-      assetsRes,
-      coursesRes,
-      enrollmentsRes,
-      auditRes,
-      locationsRes,
+      todayEventsRes,
+      todayLateRes,
+      lowLeaveRes,
     ] = await Promise.all([
       admin
         .from("employees")
         .select("id, employment_status")
         .eq("company_id", company.id),
-      admin
-        .from("org_assignments")
-        .select("employee_id, departments(id, code, name)")
-        .eq("company_id", company.id)
-        .eq("is_primary", true),
       admin
         .from("leave_requests")
         .select("id", { count: "exact", head: true })
@@ -51,6 +189,10 @@ export async function GET() {
         .from("overtime_requests")
         .select("id", { count: "exact", head: true })
         .eq("company_id", company.id)
+        .eq("status", "PENDING"),
+      admin
+        .from("attendance_exceptions")
+        .select("id", { count: "exact", head: true })
         .eq("status", "PENDING"),
       admin
         .from("contracts")
@@ -64,49 +206,26 @@ export async function GET() {
         .order("created_at", { ascending: false })
         .limit(1),
       admin
-        .from("assets")
-        .select("id, status")
-        .eq("company_id", company.id),
+        .from("attendance_raw_events")
+        .select("employee_id")
+        .gte("event_time", `${todayIso}T00:00:00`),
       admin
-        .from("courses")
-        .select("id")
-        .eq("company_id", company.id)
-        .eq("is_mandatory", true),
+        .from("attendance_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("work_date", todayIso)
+        .gt("late_minutes", 0),
       admin
-        .from("training_enrollments")
-        .select("id, status")
-        .eq("company_id", company.id),
-      admin
-        .from("audit_events")
-        .select("id, actor_role, action, target_entity, created_at")
-        .eq("company_id", company.id)
-        .order("created_at", { ascending: false })
-        .limit(6),
-      admin
-        .from("locations")
-        .select("id, code, name, address, geofence_radius_m")
-        .eq("company_id", company.id)
-        .order("code", { ascending: true }),
+        .from("leave_balances")
+        .select("employee_id, remaining_days")
+        .lte("remaining_days", 2),
     ]);
 
     const employees = employeesRes.data ?? [];
-    const activeCount = employees.filter((e) => e.employment_status === "ACTIVE").length;
-    const probationCount = employees.filter((e) => e.employment_status === "PROBATION").length;
     const totalCount = employees.filter((e) => e.employment_status !== "TERMINATED").length;
+    const presentToday = new Set(
+      (todayEventsRes.data ?? []).map((e) => e.employee_id).filter(Boolean)
+    ).size;
 
-    // Department headcount aggregation
-    const deptMap = new Map<string, { name: string; count: number }>();
-    for (const row of orgRes.data ?? []) {
-      const dept = row.departments as unknown as { id: string; code: string; name: string } | null;
-      if (dept) {
-        const cur = deptMap.get(dept.id) ?? { name: dept.name, count: 0 };
-        cur.count += 1;
-        deptMap.set(dept.id, cur);
-      }
-    }
-    const departmentBreakdown = Array.from(deptMap.values()).sort((a, b) => b.count - a.count);
-
-    // Expiring contracts within 45 days
     const now = Date.now();
     const in45Days = now + 45 * 24 * 60 * 60 * 1000;
     const expiringContracts = (contractsRes.data ?? []).filter((c) => {
@@ -115,33 +234,25 @@ export async function GET() {
       return t >= now && t <= in45Days;
     });
 
-    const assets = assetsRes.data ?? [];
-    const assignedAssets = assets.filter((a) => a.status === "ASSIGNED").length;
-
-    const enrollments = enrollmentsRes.data ?? [];
-    const completedEnrollments = enrollments.filter((e) => e.status === "COMPLETED").length;
+    const pendingApprovals =
+      (leavePendingRes.count ?? 0) +
+      (otPendingRes.count ?? 0) +
+      (excPendingRes.count ?? 0);
 
     return NextResponse.json({
       data: {
+        scope: "EXEC_HR",
         company,
         metrics: {
           totalEmployees: totalCount,
-          activeEmployees: activeCount,
-          probationEmployees: probationCount,
-          pendingLeave: leavePendingRes.count ?? 0,
-          pendingOvertime: otPendingRes.count ?? 0,
+          presentToday,
+          lateToday: todayLateRes.count ?? 0,
+          pendingApprovals,
           expiringContractsCount: expiringContracts.length,
-          totalAssets: assets.length,
-          assignedAssets,
-          mandatoryCourses: (coursesRes.data ?? []).length,
-          completedEnrollments,
-          totalEnrollments: enrollments.length,
+          lowLeaveEmployeesCount: (lowLeaveRes.data ?? []).length,
         },
         latestPayrollRun: payrollRes.data?.[0] ?? null,
         expiringContracts: expiringContracts.slice(0, 5),
-        departmentBreakdown,
-        recentAudit: auditRes.data ?? [],
-        locations: locationsRes.data ?? [],
       },
     });
   } catch (err) {

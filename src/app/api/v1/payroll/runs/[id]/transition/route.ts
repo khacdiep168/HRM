@@ -10,8 +10,10 @@ const transitionSchema = z.object({
     "ACCOUNTANT_REVIEW",
     "DIRECTOR_APPROVE",
     "LOCK",
+    "UNLOCK",
     "MARK_PAID",
   ]),
+  reason: z.string().trim().min(5).max(500).optional(),
 });
 
 export async function POST(
@@ -25,7 +27,7 @@ export async function POST(
     }
 
     const { id } = await context.params;
-    const { action } = transitionSchema.parse(await req.json());
+    const { action, reason } = transitionSchema.parse(await req.json());
     const admin = getSupabaseAdminClient();
 
     const { data: run, error: runErr } = await admin
@@ -109,6 +111,29 @@ export async function POST(
       updatePatch.status = "LOCKED";
       updatePatch.locked_by = ctx!.userId;
       updatePatch.locked_at = nowIso;
+    } else if (action === "UNLOCK") {
+      assertAuthorized(ctx, "PAYROLL", "APPROVE");
+      if (!ctx!.roles.includes("DIRECTOR") && !ctx!.roles.includes("HR_ADMIN")) {
+        return NextResponse.json(
+          { error: { code: "UNLOCK_ROLE_REQUIRED", message: "Chỉ Giám đốc hoặc Trưởng HC-NS được phép mở khóa kỳ lương." } },
+          { status: 403 }
+        );
+      }
+      if (run.status !== "LOCKED") {
+        return NextResponse.json(
+          { error: { code: "INVALID_STATE", message: "Chỉ có thể mở khóa bảng lương đang ở trạng thái LOCKED." } },
+          { status: 409 }
+        );
+      }
+      if (!reason || reason.trim().length < 5) {
+        return NextResponse.json(
+          { error: { code: "REASON_REQUIRED", message: "Bắt buộc nhập lý do (tối thiểu 5 ký tự) khi mở khóa kỳ lương." } },
+          { status: 400 }
+        );
+      }
+      updatePatch.status = "APPROVED";
+      updatePatch.locked_by = null;
+      updatePatch.locked_at = null;
     } else if (action === "MARK_PAID") {
       assertAuthorized(ctx, "PAYROLL", "UPDATE");
       if (run.status !== "LOCKED") {
@@ -157,7 +182,7 @@ export async function POST(
       target_entity: "payroll_runs",
       target_id: run.id,
       before_data: { status: run.status },
-      after_data: { status: updated.status },
+      after_data: { status: updated.status, ...(reason ? { reason } : {}) },
     });
 
     return NextResponse.json({ data: updated });

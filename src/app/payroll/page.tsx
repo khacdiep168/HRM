@@ -322,6 +322,15 @@ export default function PayrollPage() {
   }
 
   async function handleTransition(runId: string, action: string) {
+    let reason: string | undefined;
+    if (action === "UNLOCK") {
+      const input = window.prompt("Nhập lý do mở khóa kỳ lương (tối thiểu 5 ký tự):");
+      if (!input || input.trim().length < 5) {
+        setActionErr("Bắt buộc nhập lý do tối thiểu 5 ký tự để mở khóa kỳ lương.");
+        return;
+      }
+      reason = input.trim();
+    }
     setActionErr(null);
     setActionMsg(null);
     setBusy(true);
@@ -329,7 +338,7 @@ export default function PayrollPage() {
       const res = await fetch(`/api/v1/payroll/runs/${runId}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...(reason ? { reason } : {}) }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -344,7 +353,14 @@ export default function PayrollPage() {
   }
 
   if (loading) {
-    return <div className="py-12 text-center text-sm text-slate-500">Đang tải hệ thống tính lương...</div>;
+    return (
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="h-5 w-48 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
   }
 
   if (error) {
@@ -371,6 +387,7 @@ export default function PayrollPage() {
   function getAllowanceTotal(res: PayrollResultRow) {
     const items = (res.payroll_items ?? []).filter(
       (it) =>
+        it.component_code !== "BASE_SALARY" &&
         it.component_code !== "BASE_SALARY_PRORATED" &&
         it.component_code !== "MID_MONTH_ADVANCE_50"
     );
@@ -411,22 +428,10 @@ export default function PayrollPage() {
       const unpaidLeave = att?.unpaid_leave_days ?? 0;
       const remLeave = att?.remaining_annual_leave ?? 12;
       const allowanceTotal = getAllowanceTotal(res);
-      const bhxhBase =
-        res.si_base_bhxh && res.si_base_bhxh > 0
-          ? res.si_base_bhxh
-          : res.base_salary_snapshot;
-      const unionDues =
-        res.other_deductions && res.other_deductions > 0
-          ? res.other_deductions
-          : Math.min(Math.round(bhxhBase * 0.01), 253000);
-      const erIns =
-        res.er_insurance_total && res.er_insurance_total > 0
-          ? res.er_insurance_total
-          : Math.round(bhxhBase * 0.215);
-      const unionEr =
-        res.explanation_json?.unionFeeEr && res.explanation_json.unionFeeEr > 0
-          ? res.explanation_json.unionFeeEr
-          : Math.round(bhxhBase * 0.02);
+      const bhxhBase = Number(res.si_base_bhxh ?? 0);
+      const unionDues = Number(res.other_deductions ?? 0);
+      const erIns = Number(res.er_insurance_total ?? 0);
+      const unionEr = Number(res.explanation_json?.unionFeeEr ?? 0);
 
       return [
         res.employees?.employee_code ?? "",
@@ -461,8 +466,23 @@ export default function PayrollPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6 overflow-x-hidden">
       <div className={selectedPayslip ? "space-y-6 print:hidden" : "space-y-6"}>
+      {/* 5-Step Monthly Payroll Stepper */}
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 text-xs sm:grid-cols-5">
+        {[
+          { step: "1. Chốt công", desc: "Kiểm tra công & bất thường" },
+          { step: "2. Tính lương", desc: "Chạy thử & So sánh kỳ trước" },
+          { step: "3. Rà soát", desc: "Kế toán & Giám đốc duyệt" },
+          { step: "4. Khóa kỳ", desc: "Bất biến (Mở khóa cần lý do)" },
+          { step: "5. Phát hành", desc: "Phiếu lương PDF & CSV Bank" },
+        ].map((s) => (
+          <div key={s.step} className="rounded-xl bg-slate-50 px-3 py-2">
+            <div className="font-bold text-slate-900">{s.step}</div>
+            <div className="text-[11px] text-slate-500">{s.desc}</div>
+          </div>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
@@ -733,13 +753,22 @@ export default function PayrollPage() {
                           </button>
                         )}
                         {run.status === "LOCKED" && (
-                          <button
-                            type="button"
-                            onClick={() => handleTransition(run.id, "MARK_PAID")}
-                            className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white"
-                          >
-                            Xác nhận Đã chi CK
-                          </button>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleTransition(run.id, "MARK_PAID")}
+                              className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white"
+                            >
+                              Xác nhận Đã chi CK
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTransition(run.id, "UNLOCK")}
+                              className="rounded border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                            >
+                              Mở khóa
+                            </button>
+                          </div>
                         )}
                         {run.status === "PAID" && (
                           <span className="text-[11px] font-semibold text-emerald-700">
@@ -832,14 +861,7 @@ export default function PayrollPage() {
                   const unpaidLeave = att?.unpaid_leave_days ?? 0;
                   const remLeave = att?.remaining_annual_leave ?? 12;
                   const allowanceTotal = getAllowanceTotal(res);
-                  const bhxhBase =
-                    res.si_base_bhxh && res.si_base_bhxh > 0
-                      ? res.si_base_bhxh
-                      : res.base_salary_snapshot;
-                  const unionDues =
-                    res.other_deductions && res.other_deductions > 0
-                      ? res.other_deductions
-                      : Math.min(Math.round(bhxhBase * 0.01), 253000);
+                  const unionDues = Number(res.other_deductions ?? 0);
                   return (
                     <tr
                       key={res.id}
@@ -1069,19 +1091,7 @@ export default function PayrollPage() {
               <div className="flex justify-between py-1 text-rose-700">
                 <span>(-) Đoàn phí CĐ (1% BHXH • QĐ 1408/QĐ-TLĐ)</span>
                 <span className="font-mono">
-                  -
-                  {fmtVnd(
-                    selectedPayslip.other_deductions && selectedPayslip.other_deductions > 0
-                      ? selectedPayslip.other_deductions
-                      : Math.min(
-                          Math.round(
-                            (selectedPayslip.si_base_bhxh && selectedPayslip.si_base_bhxh > 0
-                              ? selectedPayslip.si_base_bhxh
-                              : selectedPayslip.base_salary_snapshot) * 0.01
-                          ),
-                          253000
-                        )
-                  )}
+                  -{fmtVnd(Number(selectedPayslip.other_deductions ?? 0))}
                 </span>
               </div>
               <div className="flex justify-between border-t border-slate-100 pt-2 font-semibold text-slate-900">

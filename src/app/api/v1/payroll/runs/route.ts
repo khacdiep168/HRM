@@ -37,6 +37,10 @@ export async function GET(req: Request) {
       ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR"].includes(r)
     );
 
+    if (!isPayrollViewer && !ctx.employeeId) {
+      return NextResponse.json({ data: { runs: [], results: [] } });
+    }
+
     let runsQuery = admin
       .from("payroll_runs")
       .select(
@@ -154,7 +158,21 @@ export async function GET(req: Request) {
       });
     }
 
-    return NextResponse.json({ data: { runs: runs ?? [], results } });
+    const safeRuns = isPayrollViewer
+      ? runs ?? []
+      : (runs ?? [])
+          .filter((run) => results.some((r) => r.payroll_run_id === run.id))
+          .map((run) => {
+            const own = results.find((r) => r.payroll_run_id === run.id);
+            return {
+              ...run,
+              total_employees: 1,
+              total_gross: Number(own?.gross_income ?? 0),
+              total_net_payable: Number(own?.net_payable ?? 0),
+            };
+          });
+
+    return NextResponse.json({ data: { runs: safeRuns, results } });
   } catch (err) {
     return handleApiError(err);
   }

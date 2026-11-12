@@ -41,6 +41,12 @@ export async function GET() {
       .order("created_at", { ascending: false })
       .limit(30);
 
+    if (!isAdminOrManager && !ctx.employeeId) {
+      return NextResponse.json({
+        data: { events: [], exceptions: [], devices: [], locations: [], shifts: [] },
+      });
+    }
+
     if (!isAdminOrManager && ctx.employeeId) {
       eventsQuery = eventsQuery.eq("employee_id", ctx.employeeId);
       exceptionsQuery = exceptionsQuery.eq("employee_id", ctx.employeeId);
@@ -188,6 +194,12 @@ export async function POST(req: Request) {
       });
     }
 
+    const clientIp =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const userAgent = req.headers.get("user-agent") || "unknown";
+
     const { data: inserted, error: insErr } = await admin
       .from("attendance_raw_events")
       .insert({
@@ -209,6 +221,9 @@ export async function POST(req: Request) {
         raw_payload: {
           note: body.note ?? null,
           locationCode: location.code,
+          clientIp,
+          userAgent,
+          suspiciousAccuracy: body.accuracyMeters > 150,
         },
       })
       .select("id, event_time, direction, distance_m, is_within_geofence")

@@ -22,8 +22,12 @@ export async function GET() {
 
     const admin = getSupabaseAdminClient();
     const isAdminOrHr = ctx.roles.some((r) =>
-      ["HR_ADMIN", "HR_STAFF", "LINE_MANAGER", "DIRECTOR", "ACCOUNTANT", "AUDITOR"].includes(r)
+      ["HR_ADMIN", "HR_STAFF", "DEPARTMENT_MANAGER", "DIRECTOR", "ACCOUNTANT", "AUDITOR"].includes(r)
     );
+
+    if (!isAdminOrHr && !ctx.employeeId) {
+      return NextResponse.json({ data: { sessions: [] } });
+    }
 
     let sessQuery = admin
       .from("attendance_sessions")

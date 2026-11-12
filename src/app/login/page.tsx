@@ -18,6 +18,8 @@ export default function LoginPage() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failedCount, setFailedCount] = useState(0);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
 
   const supabaseReady = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -55,13 +57,28 @@ export default function LoginPage() {
       return;
     }
 
+    if (lockedUntil && Date.now() < lockedUntil) {
+      const secs = Math.ceil((lockedUntil - Date.now()) / 1000);
+      setErrorMsg(`Bạn đã nhập sai nhiều lần. Vui lòng thử lại sau ${secs} giây.`);
+      return;
+    }
+
     setBusy(true);
     try {
       const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) {
-        setErrorMsg(error.message);
+        const nextFails = failedCount + 1;
+        setFailedCount(nextFails);
+        if (nextFails >= 5) {
+          setLockedUntil(Date.now() + 30_000);
+          setErrorMsg("Quá 5 lần thử thất bại. Tạm khóa đăng nhập 30 giây để bảo vệ tài khoản.");
+        } else {
+          setErrorMsg(`Đăng nhập thất bại: ${error.message}`);
+        }
         return;
       }
+      setFailedCount(0);
+      setLockedUntil(null);
 
       setStatusMsg("Đăng nhập thành công!");
       router.push("/");
@@ -154,12 +171,10 @@ export default function LoginPage() {
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
             <div className="flex items-center gap-1.5 font-semibold">
               <ShieldAlert className="h-4 w-4" />
-              Chưa cấu hình khóa Supabase
+              Hệ thống đang bảo trì kết nối xác thực
             </div>
             <p className="mt-1">
-              Sao chép <code className="font-mono">.env.example</code> thành{" "}
-              <code className="font-mono">.env.local</code> và điền khóa của project{" "}
-              <code className="font-mono">xtswzywqbizunynahmvl</code> để đăng nhập.
+              Vui lòng liên hệ quản trị viên để kiểm tra cấu hình máy chủ đăng nhập.
             </p>
           </div>
         )}
@@ -178,32 +193,40 @@ export default function LoginPage() {
         {(mfaStep === "IDLE" || mfaStep === "VERIFIED") && (
           <form onSubmit={handlePasswordLogin} className="mt-5 space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-700">
+              <label htmlFor="login-email" className="block text-xs font-medium text-slate-700">
                 Email công ty
               </label>
               <input
+                id="login-email"
+                name="email"
                 type="email"
+                autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="ten.nv@thekyvang.vn"
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700">Mật khẩu</label>
+              <label htmlFor="login-password" className="block text-xs font-medium text-slate-700">
+                Mật khẩu
+              </label>
               <input
+                id="login-password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
               />
             </div>
             <button
               type="submit"
               disabled={busy || !supabaseReady}
-              className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              className="min-h-[44px] w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
               {busy ? "Đang xác thực..." : "Đăng nhập"}
             </button>

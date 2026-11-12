@@ -20,18 +20,34 @@ export async function GET() {
     const ctx = await resolveAuthContext();
     assertAuthorized(ctx, "ATTENDANCE", "READ");
 
+    const isAdminOrManager = ctx.roles.some((r) =>
+      ["HR_ADMIN", "HR_STAFF", "DEPARTMENT_MANAGER", "DIRECTOR", "AUDITOR", "SUPER_ADMIN"].includes(r)
+    );
+
+    if (!isAdminOrManager && !ctx.employeeId) {
+      return NextResponse.json({ data: { summaries: [] } });
+    }
+
     const admin = getSupabaseAdminClient();
+    let empQuery = admin
+      .from("employees")
+      .select("id, employee_code, full_name")
+      .neq("employment_status", "TERMINATED")
+      .order("employee_code");
+    let rawQuery = admin
+      .from("attendance_raw_events")
+      .select("employee_id, event_time, direction")
+      .order("event_time", { ascending: false })
+      .limit(1000);
+
+    if (!isAdminOrManager && ctx.employeeId) {
+      empQuery = empQuery.eq("id", ctx.employeeId);
+      rawQuery = rawQuery.eq("employee_id", ctx.employeeId);
+    }
+
     const [{ data: employees }, { data: rawEvents }] = await Promise.all([
-      admin
-        .from("employees")
-        .select("id, employee_code, full_name")
-        .neq("employment_status", "TERMINATED")
-        .order("employee_code"),
-      admin
-        .from("attendance_raw_events")
-        .select("employee_id, event_time, direction")
-        .order("event_time", { ascending: false })
-        .limit(1000),
+      empQuery,
+      rawQuery,
     ]);
 
     // Aggregate distinct work days per employee

@@ -218,14 +218,24 @@ export default function AttendancePage() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      fetch("/api/v1/attendance/gps-checkin", { cache: "no-store" }),
-      fetch("/api/v1/attendance/device-sync", { cache: "no-store" }),
-      fetch("/api/v1/payroll/periods", { cache: "no-store" }),
-      fetch("/api/v1/attendance/normalize", { cache: "no-store" }),
-      fetch("/api/v1/attendance/shifts", { cache: "no-store" }),
-      fetch("/api/v1/attendance/exceptions", { cache: "no-store" }),
-    ])
+    fetch("/api/v1/auth/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((meJson) => {
+        const roles: string[] = meJson?.data?.roles ?? [];
+        const canReadPayrollPeriods = roles.some((r) =>
+          ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR"].includes(r)
+        );
+        return Promise.all([
+          fetch("/api/v1/attendance/gps-checkin", { cache: "no-store" }),
+          fetch("/api/v1/attendance/device-sync", { cache: "no-store" }),
+          canReadPayrollPeriods
+            ? fetch("/api/v1/payroll/periods", { cache: "no-store" })
+            : Promise.resolve(new Response(JSON.stringify({ data: { periods: [] } }), { status: 200 })),
+          fetch("/api/v1/attendance/normalize", { cache: "no-store" }),
+          fetch("/api/v1/attendance/shifts", { cache: "no-store" }),
+          fetch("/api/v1/attendance/exceptions", { cache: "no-store" }),
+        ]);
+      })
       .then(async ([res, sumRes, perRes, normRes, shRes, exRes]) => {
         if (!active) return;
         if (perRes.ok) {
@@ -657,7 +667,14 @@ export default function AttendancePage() {
   }
 
   if (loading) {
-    return <div className="py-12 text-center text-sm text-slate-500">Đang tải dữ liệu chấm công...</div>;
+    return (
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="h-5 w-48 animate-pulse rounded-lg bg-slate-200" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
   }
 
   if (error || !data) {
@@ -679,7 +696,7 @@ export default function AttendancePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6 overflow-x-hidden">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

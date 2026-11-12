@@ -26,8 +26,14 @@ export async function GET() {
 
     const admin = getSupabaseAdminClient();
     const isHrOrExec = ctx.roles.some((r) =>
-      ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR", "DEPARTMENT_MANAGER"].includes(r)
+      ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR"].includes(r)
     );
+
+    if (!isHrOrExec && !ctx.employeeId) {
+      return NextResponse.json({
+        data: { contracts: [], employees: [], bankAccounts: [] },
+      });
+    }
 
     let contractsQuery = admin
       .from("contracts")
@@ -40,16 +46,22 @@ export async function GET() {
       contractsQuery = contractsQuery.eq("employee_id", ctx.employeeId);
     }
 
+    let bankQuery = admin
+      .from("employee_bank_accounts")
+      .select("employee_id, bank_code, bank_name, account_no_last4, is_primary")
+      .eq("is_primary", true);
+
+    if (!isHrOrExec && ctx.employeeId) {
+      bankQuery = bankQuery.eq("employee_id", ctx.employeeId);
+    }
+
     const [{ data: contracts, error }, { data: employees }, { data: bankAccounts }] =
       await Promise.all([
         contractsQuery,
         isHrOrExec
           ? admin.from("employees").select("id, employee_code, full_name").order("employee_code")
           : Promise.resolve({ data: [] }),
-        admin
-          .from("employee_bank_accounts")
-          .select("employee_id, bank_code, bank_name, account_no_last4, is_primary")
-          .eq("is_primary", true),
+        bankQuery,
       ]);
 
     if (error) throw error;

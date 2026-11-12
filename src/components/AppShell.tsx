@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
   Users,
   ShieldCheck,
   LayoutDashboard,
-  LogIn,
   LogOut,
   MapPinned,
   Utensils,
@@ -25,10 +24,14 @@ import {
   X,
   ChevronRight,
   Calculator,
+  CheckSquare,
+  ReceiptText,
+  Settings,
 } from "lucide-react";
+import { FEATURE_FLAGS } from "@/lib/config/feature-flags";
 import { getSupabaseBrowserAuthClient } from "@/lib/supabase/client";
 
-interface MeResponse {
+interface MeState {
   authenticated: boolean;
   user?: {
     email: string;
@@ -38,13 +41,17 @@ interface MeResponse {
   };
 }
 
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles?: string[];
+  flag?: keyof typeof FEATURE_FLAGS;
+}
+
 interface NavGroup {
   title: string;
-  items: Array<{
-    href: string;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }>;
+  items: NavItem[];
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -53,63 +60,128 @@ const NAV_GROUPS: NavGroup[] = [
     items: [{ href: "/", label: "Bảng điều khiển", icon: LayoutDashboard }],
   },
   {
-    title: "Tổ chức & Nhân sự",
+    title: "Hằng ngày",
     items: [
-      { href: "/org", label: "Sơ đồ Tổ chức", icon: Building2 },
-      { href: "/employees", label: "Hồ sơ Nhân sự", icon: Users },
-      { href: "/contracts", label: "Hợp đồng & STK", icon: FileSignature },
-      { href: "/recruitment", label: "Tuyển dụng & Offer", icon: UserPlus },
-    ],
-  },
-  {
-    title: "Chấm công & Phúc lợi",
-    items: [
-      { href: "/attendance", label: "Chấm công GPS/Face", icon: MapPinned },
+      { href: "/attendance", label: "Chấm công", icon: MapPinned },
       { href: "/leave", label: "Nghỉ phép", icon: CalendarOff },
       { href: "/overtime", label: "Tăng ca (OT)", icon: Clock3 },
-      { href: "/allowances", label: "Phụ cấp & Thưởng", icon: Utensils },
+      {
+        href: "/approvals",
+        label: "Việc cần duyệt",
+        icon: CheckSquare,
+        roles: ["DEPARTMENT_MANAGER", "HR_ADMIN", "DIRECTOR"],
+      },
     ],
   },
   {
-    title: "Tiền lương & Phát triển",
+    title: "Hằng tháng",
     items: [
-      { href: "/payroll", label: "Bảng lương & Thuế", icon: Wallet },
-      { href: "/bhxh-1-lan", label: "Tính BHXH 1 lần", icon: Calculator },
-      { href: "/performance", label: "Đánh giá KPI", icon: Target },
-      { href: "/learning", label: "Đào tạo & Chứng chỉ", icon: GraduationCap },
-      { href: "/assets", label: "Tài sản & Bàn giao", icon: Package },
+      {
+        href: "/payroll",
+        label: "Bảng lương & Thuế",
+        icon: Wallet,
+        roles: ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR"],
+      },
+      { href: "/payslips", label: "Phiếu lương của tôi", icon: ReceiptText },
+      {
+        href: "/allowances",
+        label: "Phụ cấp & Thưởng",
+        icon: Utensils,
+        roles: ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT"],
+      },
     ],
   },
   {
-    title: "Tuân thủ & Kiểm toán",
+    title: "Nhân sự",
     items: [
+      { href: "/employees", label: "Hồ sơ nhân sự", icon: Users },
+      { href: "/contracts", label: "Hợp đồng & STK", icon: FileSignature },
+      {
+        href: "/org",
+        label: "Sơ đồ tổ chức",
+        icon: Building2,
+        roles: ["HR_ADMIN", "HR_STAFF", "DEPARTMENT_MANAGER", "DIRECTOR"],
+      },
+      {
+        href: "/recruitment",
+        label: "Tuyển dụng",
+        icon: UserPlus,
+        roles: ["HR_ADMIN", "HR_STAFF", "DIRECTOR"],
+        flag: "recruitment",
+      },
+      {
+        href: "/performance",
+        label: "Đánh giá KPI",
+        icon: Target,
+        flag: "performance",
+      },
+      {
+        href: "/learning",
+        label: "Đào tạo",
+        icon: GraduationCap,
+        flag: "learning",
+      },
+      {
+        href: "/assets",
+        label: "Tài sản",
+        icon: Package,
+        flag: "assets",
+      },
+      {
+        href: "/bhxh-1-lan",
+        label: "Tính BHXH 1 lần",
+        icon: Calculator,
+        flag: "bhxh1Lan",
+      },
+    ],
+  },
+  {
+    title: "Quản trị",
+    items: [
+      {
+        href: "/admin",
+        label: "Cài đặt & Tham số",
+        icon: Settings,
+        roles: ["SUPER_ADMIN", "HR_ADMIN", "ACCOUNTANT", "DIRECTOR"],
+      },
+      {
+        href: "/audit",
+        label: "Nhật ký Audit",
+        icon: Activity,
+        roles: ["HR_ADMIN", "ACCOUNTANT", "DIRECTOR", "AUDITOR"],
+      },
       { href: "/privacy", label: "Quyền riêng tư PDPL", icon: ShieldCheck },
-      { href: "/audit", label: "Nhật ký Audit", icon: Activity },
     ],
   },
-];
-
-const ALL_NAV_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
-
-const MOBILE_QUICK_ITEMS = [
-  { href: "/", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/employees", label: "Nhân sự", icon: Users },
-  { href: "/attendance", label: "Chấm công", icon: MapPinned },
-  { href: "/payroll", label: "Lương", icon: Wallet },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [me, setMe] = useState<MeResponse | null>(null);
+  const [me, setMe] = useState<MeState | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
+    if (pathname === "/login") return;
     let active = true;
     fetch("/api/v1/auth/me", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        if (active) setMe(d);
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!active) return;
+        const d = json?.data;
+        if (d?.userId) {
+          setMe({
+            authenticated: true,
+            user: {
+              email: d.email ?? "",
+              fullName: d.employeeProfile?.full_name ?? d.email ?? "Người dùng",
+              roles: Array.isArray(d.roles) ? d.roles : ["EMPLOYEE"],
+              mfaVerified: Boolean(d.mfaVerified),
+            },
+          });
+        } else {
+          setMe({ authenticated: false });
+        }
       })
       .catch(() => {
         if (active) setMe({ authenticated: false });
@@ -119,30 +191,77 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [pathname]);
 
+  const userRoles = useMemo(() => me?.user?.roles ?? [], [me]);
+
+  const visibleGroups = useMemo(() => {
+    return NAV_GROUPS.map((g) => ({
+      ...g,
+      items: g.items.filter((item) => {
+        if (item.flag && !FEATURE_FLAGS[item.flag]) return false;
+        if (item.roles && item.roles.length > 0) {
+          return item.roles.some((r) => userRoles.includes(r));
+        }
+        return true;
+      }),
+    })).filter((g) => g.items.length > 0);
+  }, [userRoles]);
+
+  const allVisibleItems = useMemo(
+    () => visibleGroups.flatMap((g) => g.items),
+    [visibleGroups]
+  );
+
+  const mobileQuickItems = useMemo(() => {
+    const isManager = userRoles.some((r) =>
+      ["DEPARTMENT_MANAGER", "HR_ADMIN", "DIRECTOR"].includes(r)
+    );
+    const isPayroll = userRoles.some((r) =>
+      ["HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR"].includes(r)
+    );
+    const items: Array<{
+      href: string;
+      label: string;
+      icon: React.ComponentType<{ className?: string }>;
+    }> = [
+      { href: "/", label: "Tổng quan", icon: LayoutDashboard },
+      { href: "/attendance", label: "Chấm công", icon: MapPinned },
+    ];
+    if (isManager) {
+      items.push({ href: "/approvals", label: "Duyệt", icon: CheckSquare });
+    } else {
+      items.push({ href: "/leave", label: "Nghỉ phép", icon: CalendarOff });
+    }
+    if (isPayroll) {
+      items.push({ href: "/payroll", label: "Bảng lương", icon: Wallet });
+    } else {
+      items.push({ href: "/payslips", label: "Phiếu lương", icon: ReceiptText });
+    }
+    return items;
+  }, [userRoles]);
+
   async function handleSignOut() {
     const supabase = getSupabaseBrowserAuthClient();
     if (supabase) {
       await supabase.auth.signOut();
     }
+    await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => {});
     setMe({ authenticated: false });
     setMobileOpen(false);
     router.push("/login");
     router.refresh();
   }
 
-  if (pathname === "/login") {
-    return (
-      <div className="min-h-screen bg-slate-50 text-slate-900">{children}</div>
-    );
+  // Hide navigation completely on /login or when unauthenticated
+  if (pathname === "/login" || (me !== null && !me.authenticated)) {
+    return <div className="min-h-screen bg-slate-50 text-slate-900">{children}</div>;
   }
 
-  const currentNav = ALL_NAV_ITEMS.find((item) =>
+  const currentNav = allVisibleItems.find((item) =>
     item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
   );
 
   const sidebarContent = (
     <div className="flex h-full flex-col bg-slate-950 text-slate-200">
-      {/* Brand */}
       <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-4">
         <Link
           href="/"
@@ -156,24 +275,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="text-sm font-bold tracking-tight text-white">
               THẾ KỶ VÀNG
             </div>
-            <div className="text-[11px] text-slate-400">
-              Enterprise HRM • Vùng III
-            </div>
+            <div className="text-[11px] text-slate-400">HRM • Tây Ninh</div>
           </div>
         </Link>
         <button
           type="button"
           onClick={() => setMobileOpen(false)}
-          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white lg:hidden"
           aria-label="Đóng menu"
         >
           <X className="h-5 w-5" />
         </button>
       </div>
 
-      {/* Navigation Groups */}
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
-        {NAV_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.title}>
             <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               {group.title}
@@ -190,7 +306,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     key={item.href}
                     href={item.href}
                     onClick={() => setMobileOpen(false)}
-                    className={`group flex items-center justify-between rounded-xl px-3 py-2 text-[13px] font-medium transition ${
+                    className={`group flex min-h-[40px] items-center justify-between rounded-xl px-3 py-2 text-[13px] font-medium transition ${
                       isActive
                         ? "bg-amber-500/15 text-amber-400 shadow-inner"
                         : "text-slate-300 hover:bg-slate-900 hover:text-white"
@@ -215,9 +331,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ))}
       </nav>
 
-      {/* Sidebar Footer / User Info */}
       <div className="border-t border-slate-800/80 p-3">
-        {me?.authenticated && me.user ? (
+        {me?.user && (
           <div className="rounded-xl bg-slate-900/90 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -232,21 +347,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 onClick={handleSignOut}
                 title="Đăng xuất"
-                className="rounded-lg border border-slate-700 p-1.5 text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                aria-label="Đăng xuất"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:bg-slate-800 hover:text-white"
               >
-                <LogOut className="h-3.5 w-3.5" />
+                <LogOut className="h-4 w-4" />
               </button>
             </div>
           </div>
-        ) : (
-          <Link
-            href="/login"
-            onClick={() => setMobileOpen(false)}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-500"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            Đăng nhập hệ thống
-          </Link>
         )}
       </div>
     </div>
@@ -254,12 +361,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 lg:flex">
-      {/* Desktop Fixed Sidebar */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-40 lg:block lg:w-64">
         {sidebarContent}
       </aside>
 
-      {/* Mobile Drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
           <div
@@ -272,37 +377,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
-        {/* Sticky Top Bar */}
-        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-64">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setMobileOpen(true)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 lg:hidden"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 lg:hidden"
                 aria-label="Mở menu điều hướng"
               >
-                <Menu className="h-4 w-4" />
+                <Menu className="h-5 w-5" />
               </button>
               <div>
                 <div className="text-sm font-bold text-slate-900 sm:text-base">
                   {currentNav?.label ?? "THẾ KỶ VÀNG HRM"}
                 </div>
                 <div className="hidden text-[11px] text-slate-500 sm:block">
-                  Công ty TNHH Thương mại Thế Kỷ Vàng • MST 3900336463
+                  Công ty TNHH Thương mại Thế Kỷ Vàng • Tây Ninh
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 md:inline-flex">
-                QĐ 13/2026/QĐ-TKV
-              </span>
-              {me?.authenticated && me.user ? (
+            {me?.user && (
+              <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-600 text-[11px] font-bold text-white">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white">
                     {me.user.fullName.charAt(0).toUpperCase()}
                   </div>
                   <div className="hidden text-left sm:block">
@@ -314,39 +414,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
                   </div>
                 </div>
-              ) : (
-                <Link
-                  href="/login"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
                 >
-                  <LogIn className="h-3.5 w-3.5" />
-                  Đăng nhập
-                </Link>
-              )}
-            </div>
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Đăng xuất</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 pb-24 sm:px-6 lg:py-7 lg:pb-8">
+        <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 px-4 py-5 pb-24 sm:px-6 lg:py-7 lg:pb-8">
           {children}
         </main>
-
-        <footer className="hidden border-t border-slate-200 bg-white py-3.5 text-xs text-slate-500 lg:block">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6">
-            <div>
-              CÔNG TY TNHH THƯƠNG MẠI THẾ KỶ VÀNG (MST: 3900336463) • Vùng III Tây Ninh
-            </div>
-            <div className="flex items-center gap-2 text-emerald-700">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>RLS Enabled • PII AES-256-GCM • Supabase + Vercel sin1</span>
-            </div>
-          </div>
-        </footer>
       </div>
 
-      {/* Mobile Bottom Quick Bar */}
+      {/* Mobile Bottom Quick Bar (44px+ touch targets) */}
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white/95 backdrop-blur-md lg:hidden">
-        {MOBILE_QUICK_ITEMS.map((item) => {
+        {mobileQuickItems.map((item) => {
           const Icon = item.icon;
           const isActive =
             item.href === "/"
@@ -356,7 +444,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex flex-col items-center justify-center py-2 text-[10px] font-medium ${
+              className={`flex min-h-[52px] flex-col items-center justify-center py-1.5 text-[10px] font-medium ${
                 isActive ? "text-amber-600" : "text-slate-500"
               }`}
             >
@@ -368,7 +456,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
-          className="flex flex-col items-center justify-center py-2 text-[10px] font-medium text-slate-500"
+          className="flex min-h-[52px] flex-col items-center justify-center py-1.5 text-[10px] font-medium text-slate-500"
         >
           <Menu className="mb-0.5 h-4 w-4" />
           <span>Tất cả</span>

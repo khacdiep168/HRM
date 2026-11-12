@@ -42,7 +42,10 @@ export async function GET() {
       )
       .order("employee_code");
 
-    if (!isCompanyWideHrOrExec && ctx.employeeId) {
+    if (!isCompanyWideHrOrExec) {
+      if (!ctx.employeeId) {
+        return NextResponse.json({ data: [], meta: { total: 0 } });
+      }
       query = query.eq("id", ctx.employeeId);
     }
 
@@ -95,8 +98,13 @@ export async function GET() {
       const tax = taxMap.get(emp.id);
       const bank = bankMap.get(emp.id);
 
+      const safeEmp = { ...emp };
+      delete (safeEmp as Record<string, unknown>).national_id_enc;
+      delete (safeEmp as Record<string, unknown>).national_id_hash;
+      delete (safeEmp as Record<string, unknown>).tax_code_enc;
+
       return {
-        ...emp,
+        ...safeEmp,
         national_id_masked: emp.national_id_last4 ? `********${emp.national_id_last4}` : "—",
         phone_masked: contact?.phone_last4 ? `******${contact.phone_last4}` : "—",
         personal_email: contact?.personal_email ?? null,
