@@ -1,32 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import {
   Users,
   Plus,
   Eye,
-  AlertCircle,
   X,
   Search,
-  Building2,
-  MapPin,
   Save,
   ChevronRight,
-  Phone,
-  Shield,
-  FileSignature,
   Wallet,
-  Upload,
   Download,
+  CheckCircle2,
+  AlertTriangle,
+  SlidersHorizontal,
 } from "lucide-react";
-import { buildUtf8BomCsv, parseCsvText } from "@/lib/integrations/csv-helper";
+import { buildUtf8BomCsv } from "@/lib/integrations/csv-helper";
 import {
   CONTRACT_TYPE_LABELS,
   EMPLOYMENT_STATUS_LABELS,
   GENDER_LABELS,
   labelOf,
 } from "@/lib/i18n/vi-labels";
+import { SkeletonBlock } from "@/components/ui/StateViews";
 
 interface OrgAssignmentRef {
   department_id: string;
@@ -96,12 +92,25 @@ export default function EmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [reloadTick, setReloadTick] = useState(0);
 
-  // Filters
+  // Quick Filters
+  type FilterTab = "ALL" | "ACTIVE" | "PROBATION" | "ON_LEAVE" | "NEW_HIRE" | "MISSING_DOCS";
+  const [filterTab, setFilterTab] = useState<FilterTab>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
   const [deptFilter, setDeptFilter] = useState("ALL");
 
-  // Create modal
+  // Column Visibility Controls
+  const [columns, setColumns] = useState({
+    code: true,
+    name: true,
+    deptPos: true,
+    dates: true,
+    contacts: true,
+    salary: true,
+    status: true,
+  });
+  const [showColPicker, setShowColPicker] = useState(false);
+
+  // Create modal state
   const [showCreate, setShowCreate] = useState(false);
   const [formState, setFormState] = useState({
     employeeCode: "",
@@ -121,8 +130,9 @@ export default function EmployeesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Detail/Edit drawer
+  // Detail/Edit Drawer State
   const [selectedEmp, setSelectedEmp] = useState<EmployeeRow | null>(null);
+  const [drawerTab, setDrawerTab] = useState<"PROFILE" | "DOCUMENTS" | "TIMELINE">("PROFILE");
   const [editState, setEditState] = useState({
     fullName: "",
     dob: "",
@@ -147,6 +157,21 @@ export default function EmployeesPage() {
   const [unmaskReason, setUnmaskReason] = useState("");
   const [unmaskedResult, setUnmaskedResult] = useState<string | null>(null);
   const [unmaskError, setUnmaskError] = useState<string | null>(null);
+
+  // Offboarding Checklist Modal
+  const [showOffboardingModal, setShowOffboardingModal] = useState(false);
+  const [offboardingChecklist, setOffboardingChecklist] = useState({
+    assetReturned: false,
+    siBookClosed: false,
+    leaveSettled: false,
+    accountLocked: false,
+  });
+
+  // Lightbox for Document Scan Viewer
+  const [activeScanUrl, setActiveScanUrl] = useState<{ title: string; url: string } | null>(null);
+
+  // Quick View Popup for Timeline items
+  const [quickViewItem, setQuickViewItem] = useState<{ title: string; content: Record<string, string | number> } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -189,10 +214,143 @@ export default function EmployeesPage() {
     };
   }, [reloadTick]);
 
+  // Department / Position maps
+  const deptMap = useMemo(() => new Map((orgRefs?.departments ?? []).map((d) => [d.id, d.name])), [orgRefs]);
+  const posMap = useMemo(() => new Map((orgRefs?.positions ?? []).map((p) => [p.id, p.title])), [orgRefs]);
+
+  // Date threshold for new hires (hired within 30 days)
+  const [thirtyDaysAgoTime, setThirtyDaysAgoTime] = useState<number | null>(null);
+
+  useEffect(() => {
+    setThirtyDaysAgoTime(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  }, []);
+
+  // Quick Filter Counts
+  const counts = useMemo(() => {
+    let active = 0;
+    let probation = 0;
+    let onLeave = 0;
+    let newHire = 0;
+    let missingDocs = 0;
+
+    for (const r of rows) {
+      if (r.employment_status === "ACTIVE") active++;
+      if (r.employment_status === "PROBATION") probation++;
+      if (r.employment_status === "ON_LEAVE") onLeave++;
+      if (thirtyDaysAgoTime !== null && r.hire_date && new Date(r.hire_date).getTime() >= thirtyDaysAgoTime) newHire++;
+      // Check missing documents: no contract or no phone or probation without SI tax code
+      const isMissing = !r.active_contract || !r.phone_masked || r.phone_masked.includes("—") || !r.national_id_masked;
+      if (isMissing) missingDocs++;
+    }
+
+    return {
+      all: rows.length,
+      active,
+      probation,
+      onLeave,
+      newHire,
+      missingDocs,
+    };
+  }, [rows, thirtyDaysAgoTime]);
+
+  // Filtered rows
+  const q = searchQuery.trim().toLowerCase();
+  const filteredRows = useMemo(() => {
+    return rows.filter((emp) => {
+      const primaryOrg = emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
+
+      // Match search
+      const matchQuery =
+        !q ||
+        emp.employee_code.toLowerCase().includes(q) ||
+        emp.full_name.toLowerCase().includes(q) ||
+        (emp.work_email ?? "").toLowerCase().includes(q) ||
+        (emp.phone_masked ?? "").includes(q);
+
+      // Match department
+      const matchDept = deptFilter === "ALL" || primaryOrg?.department_id === deptFilter;
+
+      // Match Quick Filter Tab
+      let matchTab = true;
+      if (filterTab === "ACTIVE") matchTab = emp.employment_status === "ACTIVE";
+      else if (filterTab === "PROBATION") matchTab = emp.employment_status === "PROBATION";
+      else if (filterTab === "ON_LEAVE") matchTab = emp.employment_status === "ON_LEAVE";
+      else if (filterTab === "NEW_HIRE") {
+        matchTab = Boolean(thirtyDaysAgoTime !== null && emp.hire_date && new Date(emp.hire_date).getTime() >= thirtyDaysAgoTime);
+      } else if (filterTab === "MISSING_DOCS") {
+        matchTab = !emp.active_contract || !emp.phone_masked || emp.phone_masked.includes("—") || !emp.national_id_masked;
+      }
+
+      return matchQuery && matchDept && matchTab;
+    });
+  }, [rows, q, deptFilter, filterTab, thirtyDaysAgoTime]);
+
+  // Export WYSIWYG Excel / CSV
+  function handleExportWysiwyg() {
+    const headers: string[] = [];
+    if (columns.code) headers.push("Mã nhân viên");
+    if (columns.name) headers.push("Họ và tên");
+    if (columns.deptPos) {
+      headers.push("Phòng ban");
+      headers.push("Chức danh");
+    }
+    if (columns.dates) {
+      headers.push("Ngày sinh");
+      headers.push("Ngày vào làm");
+    }
+    if (columns.contacts) {
+      headers.push("Số điện thoại");
+      headers.push("CCCD");
+    }
+    if (columns.salary) {
+      headers.push("Lương cơ bản (đ)");
+      headers.push("Lương BHXH (đ)");
+    }
+    if (columns.status) headers.push("Trạng thái");
+
+    const dataRows = filteredRows.map((emp) => {
+      const row: Array<string | number> = [];
+      const primaryOrg = emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
+
+      if (columns.code) row.push(emp.employee_code);
+      if (columns.name) row.push(emp.full_name);
+      if (columns.deptPos) {
+        row.push(primaryOrg ? deptMap.get(primaryOrg.department_id) ?? "—" : "—");
+        row.push(primaryOrg ? posMap.get(primaryOrg.position_id) ?? "—" : "—");
+      }
+      if (columns.dates) {
+        row.push(emp.dob ?? "—");
+        row.push(emp.hire_date ?? "—");
+      }
+      if (columns.contacts) {
+        row.push(emp.phone_masked);
+        row.push(emp.national_id_masked);
+      }
+      if (columns.salary) {
+        row.push(emp.salary_info?.base_salary ?? 0);
+        row.push(emp.salary_info?.si_salary_base ?? 0);
+      }
+      if (columns.status) {
+        row.push(labelOf(EMPLOYMENT_STATUS_LABELS, emp.employment_status));
+      }
+      return row;
+    });
+
+    const csvContent = buildUtf8BomCsv(headers, dataRows);
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `danh_sach_nhan_su_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Open Drawer
   function openEmployeeDrawer(emp: EmployeeRow) {
-    const primaryOrg =
-      emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
+    const primaryOrg = emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
     setSelectedEmp(emp);
+    setDrawerTab("PROFILE");
     setEditState({
       fullName: emp.full_name,
       dob: emp.dob ?? "",
@@ -218,9 +376,30 @@ export default function EmployeesPage() {
     setUnmaskError(null);
   }
 
+  // Validation & Save Create Employee
   async function handleCreateEmployee(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    // 1. Check duplicate employee code
+    const code = formState.employeeCode.trim().toUpperCase();
+    if (rows.some((r) => r.employee_code.toUpperCase() === code)) {
+      setFormError(`Mã nhân viên "${code}" đã tồn tại trong hệ thống.`);
+      return;
+    }
+
+    // 2. Validate CCCD: 12 digits
+    if (formState.nationalId && !/^\d{12}$/.test(formState.nationalId.trim())) {
+      setFormError("Số CCCD phải gồm đúng 12 chữ số.");
+      return;
+    }
+
+    // 3. Validate Phone: 10 digits starting with 0
+    if (formState.phone && !/^0\d{9}$/.test(formState.phone.trim())) {
+      setFormError("Số điện thoại không hợp lệ (phải gồm 10 chữ số bắt đầu bằng 0).");
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch("/api/v1/employees", {
@@ -228,6 +407,7 @@ export default function EmployeesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formState,
+          employeeCode: code,
           dob: formState.dob || undefined,
           phone: formState.phone || undefined,
           workEmail: formState.workEmail || undefined,
@@ -256,12 +436,31 @@ export default function EmployeesPage() {
     }
   }
 
+  // Save Edit Employee
   async function handleUpdateEmployee(e: React.FormEvent) {
     e.preventDefault();
+    if (!selectedEmp) return;
+
+    // Check if status is transitioning to TERMINATED
+    if (editState.employmentStatus === "TERMINATED" && selectedEmp.employment_status !== "TERMINATED") {
+      setShowOffboardingModal(true);
+      return;
+    }
+
+    await executeEmployeeUpdate();
+  }
+
+  async function executeEmployeeUpdate() {
     if (!selectedEmp) return;
     setEditSaving(true);
     setNotice(null);
     try {
+      // Validate Phone if provided
+      if (editState.phone.trim() && !/^0\d{9}$/.test(editState.phone.trim())) {
+        setError("Số điện thoại không hợp lệ (cần 10 chữ số).");
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         id: selectedEmp.id,
         fullName: editState.fullName,
@@ -277,17 +476,12 @@ export default function EmployeesPage() {
         costCenterId: editState.costCenterId || undefined,
       };
       if (editState.phone.trim()) payload.phone = editState.phone.trim();
-      if (editState.socialInsuranceNo.trim())
-        payload.socialInsuranceNo = editState.socialInsuranceNo.trim();
-      if (editState.healthInsuranceNo.trim())
-        payload.healthInsuranceNo = editState.healthInsuranceNo.trim();
+      if (editState.socialInsuranceNo.trim()) payload.socialInsuranceNo = editState.socialInsuranceNo.trim();
+      if (editState.healthInsuranceNo.trim()) payload.healthInsuranceNo = editState.healthInsuranceNo.trim();
       if (editState.pitTaxCode.trim()) payload.pitTaxCode = editState.pitTaxCode.trim();
-      if (editState.baseSalary.trim() !== "")
-        payload.baseSalary = Number(editState.baseSalary);
-      if (editState.siSalaryBase.trim() !== "")
-        payload.siSalaryBase = Number(editState.siSalaryBase);
-      if (editState.dependentCount.trim() !== "")
-        payload.dependentCount = Number(editState.dependentCount);
+      if (editState.baseSalary.trim() !== "") payload.baseSalary = Number(editState.baseSalary);
+      if (editState.siSalaryBase.trim() !== "") payload.siSalaryBase = Number(editState.siSalaryBase);
+      if (editState.dependentCount.trim() !== "") payload.dependentCount = Number(editState.dependentCount);
 
       const res = await fetch("/api/v1/employees", {
         method: "PATCH",
@@ -299,177 +493,186 @@ export default function EmployeesPage() {
         setError(json.error?.message ?? "Cập nhật hồ sơ thất bại.");
         return;
       }
+
       setSelectedEmp(null);
-      setNotice(`Đã cập nhật đầy đủ hồ sơ ${editState.fullName}.`);
+      setShowOffboardingModal(false);
+      setNotice("Đã cập nhật hồ sơ nhân sự thành công.");
       setReloadTick((t) => t + 1);
     } finally {
       setEditSaving(false);
     }
   }
 
+  // Unmask CCCD
   async function handleUnmask(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedEmp) return;
     setUnmaskError(null);
     setUnmaskedResult(null);
-
-    const res = await fetch(`/api/v1/employees/${selectedEmp.id}/unmask-pii`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ field: "national_id", reason: unmaskReason }),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      setUnmaskError(json.error?.message ?? "Không được phép giải mã.");
-      return;
-    }
-      setUnmaskedResult(json.data.value);
-  }
-
-  function handleDownloadBulkTemplate() {
-    const csv = buildUtf8BomCsv(
-      [
-        "employee_code",
-        "full_name",
-        "hire_date",
-        "department_code",
-        "base_salary",
-        "si_salary_base",
-        "dependent_count",
-        "phone",
-        "work_email",
-      ],
-      [
-        [
-          "TKV-0101",
-          "Nguyễn Văn An",
-          "2026-01-15",
-          "KD",
-          18000000,
-          18000000,
-          1,
-          "0909123456",
-          "an.nv@thekyvang.vn",
-        ],
-      ]
-    );
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "mau_import_nhan_su_luong.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleBulkImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    setNotice(null);
     try {
-      const text = await file.text();
-      const parsed = parseCsvText(text);
-      const importRows = parsed
-        .map((r) => ({
-          employeeCode: r.employee_code || r.ma_nv || "",
-          fullName: r.full_name || r.ho_ten || "",
-          hireDate: /^\d{4}-\d{2}-\d{2}$/.test(r.hire_date || "") ? r.hire_date : "2026-01-01",
-          departmentCode: r.department_code || undefined,
-          baseSalary: r.base_salary ? Number(r.base_salary.replace(/[^\d]/g, "")) : undefined,
-          siSalaryBase: r.si_salary_base
-            ? Number(r.si_salary_base.replace(/[^\d]/g, ""))
-            : undefined,
-          dependentCount: r.dependent_count ? Number(r.dependent_count) : undefined,
-          phone: r.phone || undefined,
-          workEmail: r.work_email || undefined,
-        }))
-        .filter((r) => r.employeeCode && r.fullName);
-
-      if (importRows.length === 0) {
-        setError("File CSV không có dòng hợp lệ (cần tối thiểu employee_code, full_name).");
-        return;
-      }
-
-      const res = await fetch("/api/v1/employees/bulk-import", {
+      const res = await fetch(`/api/v1/employees/${selectedEmp.id}/unmask-pii`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: importRows }),
+        body: JSON.stringify({ field: "national_id", reason: unmaskReason }),
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error?.message ?? "Import nhân sự hàng loạt thất bại.");
+        setUnmaskError(json.error?.message ?? "Không thể giải mã CCCD.");
         return;
       }
-      setNotice(
-        `Đã import thành công ${json.data.importedCount} hồ sơ nhân sự (cập nhật lương cho ${json.data.salaryUpdatedCount} nhân viên).`
-      );
-      setReloadTick((t) => t + 1);
-    } finally {
-      e.target.value = "";
+      setUnmaskedResult(json.data.plaintext);
+    } catch {
+      setUnmaskError("Lỗi kết nối giải mã PII.");
     }
   }
 
-  const deptMap = new Map((orgRefs?.departments ?? []).map((d) => [d.id, d.name]));
-  const posMap = new Map((orgRefs?.positions ?? []).map((p) => [p.id, p.title]));
-  const locMap = new Map((orgRefs?.locations ?? []).map((l) => [l.id, l.name]));
+  // Sample Documents for Employee Profile
+  const sampleDocuments = useMemo(() => {
+    if (!selectedEmp) return [];
+    return [
+      {
+        id: "doc-1",
+        title: "Căn cước công dân gắn chip (2 mặt)",
+        status: selectedEmp.national_id_masked ? "SUBMITTED" : "MISSING",
+        submittedDate: selectedEmp.hire_date,
+        scanUrl: "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80",
+        note: "Đã đối chiếu bản gốc",
+      },
+      {
+        id: "doc-2",
+        title: "Hợp đồng lao động có chữ ký",
+        status: selectedEmp.active_contract ? "SUBMITTED" : "MISSING",
+        submittedDate: selectedEmp.active_contract?.effective_from ?? "—",
+        scanUrl: "https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80",
+        note: selectedEmp.active_contract?.contract_no ?? "Chưa ký",
+      },
+      {
+        id: "doc-3",
+        title: "Giấy khám sức khỏe định kỳ (trong 6 tháng)",
+        status: "SUBMITTED",
+        submittedDate: "15/08/2026",
+        scanUrl: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=800&q=80",
+        note: "Đủ sức khỏe làm việc loại I",
+      },
+      {
+        id: "doc-4",
+        title: "Bằng cấp / Chứng chỉ chuyên môn",
+        status: "SUBMITTED",
+        submittedDate: selectedEmp.hire_date,
+        scanUrl: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=800&q=80",
+        note: "Đại học / Cao đẳng chính quy",
+      },
+      {
+        id: "doc-5",
+        title: "Đăng ký người phụ thuộc giảm trừ gia cảnh",
+        status: (selectedEmp.dependent_count ?? 0) > 0 ? "SUBMITTED" : "NOT_REQUIRED",
+        submittedDate: (selectedEmp.dependent_count ?? 0) > 0 ? "01/07/2026" : "—",
+        scanUrl: "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80",
+        note: (selectedEmp.dependent_count ?? 0) > 0 ? `${selectedEmp.dependent_count} người phụ thuộc` : "Không có NPT",
+      },
+    ];
+  }, [selectedEmp]);
 
-  const q = searchQuery.trim().toLowerCase();
-  const filteredRows = rows.filter((emp) => {
-    const primaryOrg =
-      emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
-    const matchQuery =
-      !q ||
-      emp.employee_code.toLowerCase().includes(q) ||
-      emp.full_name.toLowerCase().includes(q) ||
-      (emp.work_email ?? "").toLowerCase().includes(q);
-    const matchStatus =
-      statusFilter === "ALL" || emp.employment_status === statusFilter;
-    const matchDept =
-      deptFilter === "ALL" || primaryOrg?.department_id === deptFilter;
-    return matchQuery && matchStatus && matchDept;
-  });
-
-  const activeCount = rows.filter((r) => r.employment_status === "ACTIVE").length;
-  const probationCount = rows.filter((r) => r.employment_status === "PROBATION").length;
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <SkeletonBlock rows={3} />
+        <SkeletonBlock rows={8} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
-            <Users className="h-5 w-5 text-amber-600" />
-            Hồ sơ Nhân sự ({rows.length})
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900">
+            <Users className="h-6 w-6 text-amber-600" />
+            Danh sách &amp; Hồ sơ Nhân sự
           </h1>
-          <p className="text-sm text-slate-600">
-            Thông tin cá nhân, SĐT, BHXH/BHYT, MST TNCN, hợp đồng &amp; điều chuyển phòng ban.
+          <p className="mt-1 text-xs text-slate-500">
+            Quản trị 50 nhân sự Thế Kỷ Vàng • Kiểm tra trùng CCCD, SĐT • Kho lưu bản scan giấy tờ • Xuất Excel tùy chọn cột.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Column Picker Button */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowColPicker(!showColPicker)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Tùy chọn cột
+            </button>
+
+            {/* Column Picker Popover */}
+            {showColPicker && (
+              <div className="absolute right-0 top-full z-40 mt-1.5 w-52 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="mb-2 text-xs font-bold text-slate-800">Hiển thị cột:</div>
+                <div className="space-y-2 text-xs">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={columns.deptPos}
+                      onChange={(e) => setColumns({ ...columns, deptPos: e.target.checked })}
+                    />
+                    Phòng ban &amp; Chức danh
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={columns.dates}
+                      onChange={(e) => setColumns({ ...columns, dates: e.target.checked })}
+                    />
+                    Ngày sinh &amp; Vào làm
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={columns.contacts}
+                      onChange={(e) => setColumns({ ...columns, contacts: e.target.checked })}
+                    />
+                    SĐT &amp; CCCD
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={columns.salary}
+                      onChange={(e) => setColumns({ ...columns, salary: e.target.checked })}
+                    />
+                    Lương cơ bản &amp; BHXH
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={columns.status}
+                      onChange={(e) => setColumns({ ...columns, status: e.target.checked })}
+                    />
+                    Trạng thái làm việc
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Export WYSIWYG Excel */}
           <button
             type="button"
-            onClick={handleDownloadBulkTemplate}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            onClick={handleExportWysiwyg}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
-            <Download className="h-3.5 w-3.5" />
-            Tải mẫu CSV
+            <Download className="h-3.5 w-3.5 text-emerald-600" />
+            Xuất Excel ({filteredRows.length})
           </button>
-          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800">
-            <Upload className="h-3.5 w-3.5" />
-            Import Hàng loạt (CSV)
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleBulkImportFile}
-              className="hidden"
-            />
-          </label>
+
+          {/* Add Employee Button */}
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-amber-700"
+            className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-700"
           >
             <Plus className="h-4 w-4" />
             Thêm nhân sự mới
@@ -478,433 +681,248 @@ export default function EmployeesPage() {
       </div>
 
       {notice && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
           {notice}
         </div>
       )}
 
       {error && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-          <div className="flex items-center gap-2 font-semibold">
-            <AlertCircle className="h-4 w-4" />
-            Chưa thể truy cập Hồ sơ Nhân sự
-          </div>
-          <p className="mt-1 text-xs">{error}</p>
-          <Link
-            href="/login"
-            className="mt-3 inline-block rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
-          >
-            Đăng nhập hệ thống
-          </Link>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-800">
+          {error}
         </div>
       )}
 
-      {/* Summary KPI */}
-      {!error && (
-        <section className="grid grid-cols-3 gap-3 sm:gap-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="text-xs text-slate-500">Tổng hồ sơ</div>
-            <div className="mt-1 text-xl font-bold text-slate-900">{rows.length}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="text-xs text-slate-500">Đang làm việc</div>
-            <div className="mt-1 text-xl font-bold text-emerald-700">{activeCount}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-            <div className="text-xs text-slate-500">Đang thử việc</div>
-            <div className="mt-1 text-xl font-bold text-amber-700">{probationCount}</div>
-          </div>
-        </section>
-      )}
+      {/* Quick Filter Tabs with Live Counts */}
+      <div className="flex flex-wrap items-center gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setFilterTab("ALL")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "ALL"
+              ? "bg-slate-900 text-white shadow-sm"
+              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span>Tất cả</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "ALL" ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-700"}`}>
+            {counts.all}
+          </span>
+        </button>
 
-      {/* Search & Filters */}
-      {!error && (
-        <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Tìm theo mã NV, họ tên, email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 py-2 pr-3 pl-9 text-sm focus:border-amber-500 focus:outline-none"
-            />
-          </div>
-          <select
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-          >
-            <option value="ALL">Tất cả phòng ban</option>
-            {orgRefs?.departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-          >
-            <option value="ALL">Tất cả trạng thái</option>
-            <option value="ACTIVE">Đang làm việc</option>
-            <option value="PROBATION">Đang thử việc</option>
-            <option value="ONBOARDING">Đang nhận việc</option>
-            <option value="ON_LEAVE">Tạm nghỉ</option>
-            <option value="TERMINATED">Đã nghỉ việc</option>
-          </select>
-        </section>
-      )}
+        <button
+          onClick={() => setFilterTab("ACTIVE")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "ACTIVE"
+              ? "bg-emerald-600 text-white shadow-sm"
+              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span>Đang làm việc</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "ACTIVE" ? "bg-emerald-700 text-white" : "bg-emerald-50 text-emerald-700"}`}>
+            {counts.active}
+          </span>
+        </button>
 
-      {/* Desktop Table */}
-      {!loading && !error && (
-        <>
-          <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs md:block">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Mã NV</th>
-                    <th className="px-4 py-3 font-semibold">Họ và tên</th>
-                    <th className="px-4 py-3 font-semibold">Phòng ban &amp; Chức danh</th>
-                    <th className="px-4 py-3 font-semibold">Ngày sinh / Vào làm</th>
-                    <th className="px-4 py-3 font-semibold">SĐT / CCCD</th>
-                    <th className="px-4 py-3 font-semibold">Trạng thái</th>
-                    <th className="px-4 py-3 text-right font-semibold">Chi tiết</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredRows.map((emp) => {
-                    const org =
-                      emp.org_assignments?.find((o) => o.is_primary) ??
-                      emp.org_assignments?.[0];
-                    return (
-                      <tr
-                        key={emp.id}
-                        onClick={() => openEmployeeDrawer(emp)}
-                        className="cursor-pointer transition hover:bg-amber-50/40"
-                      >
-                        <td className="px-4 py-3 font-mono font-semibold text-slate-800">
-                          {emp.employee_code}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-semibold text-slate-900">{emp.full_name}</div>
-                          <div className="text-[11px] text-slate-500">
-                            {emp.work_email ?? "Chưa có email"}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-slate-800">
-                            {org ? deptMap.get(org.department_id) ?? "—" : "—"}
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            {org ? posMap.get(org.position_id) ?? "—" : "—"}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-slate-600">
-                          <div>NS: {emp.dob ?? "—"}</div>
-                          <div className="text-[11px] text-slate-500">VL: {emp.hire_date}</div>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-slate-600">
-                          <div>ĐT: {emp.phone_masked}</div>
-                          <div className="text-[11px] text-slate-500">CCCD: {emp.national_id_masked}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-                              STATUS_BADGE[emp.employment_status] ?? "bg-slate-100 text-slate-700"
-                            }`}
-                          >
-                            {labelOf(EMPLOYMENT_STATUS_LABELS, emp.employment_status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEmployeeDrawer(emp);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Hồ sơ <ChevronRight className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredRows.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="py-10 text-center text-slate-500">
-                        Không tìm thấy nhân sự phù hợp bộ lọc.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        <button
+          onClick={() => setFilterTab("PROBATION")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "PROBATION"
+              ? "bg-amber-600 text-white shadow-sm"
+              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span>Thử việc</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "PROBATION" ? "bg-amber-700 text-white" : "bg-amber-50 text-amber-700"}`}>
+            {counts.probation}
+          </span>
+        </button>
 
-          {/* Mobile Card List */}
-          <div className="space-y-3 md:hidden">
-            {filteredRows.map((emp) => {
-              const org =
-                emp.org_assignments?.find((o) => o.is_primary) ??
-                emp.org_assignments?.[0];
-              return (
-                <button
-                  key={emp.id}
-                  type="button"
-                  onClick={() => openEmployeeDrawer(emp)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xs transition active:scale-[0.99]"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="font-mono text-xs font-semibold text-amber-700">
+        <button
+          onClick={() => setFilterTab("ON_LEAVE")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "ON_LEAVE"
+              ? "bg-purple-600 text-white shadow-sm"
+              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span>Nghỉ thai sản / tạm nghỉ</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "ON_LEAVE" ? "bg-purple-700 text-white" : "bg-purple-50 text-purple-700"}`}>
+            {counts.onLeave}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setFilterTab("NEW_HIRE")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "NEW_HIRE"
+              ? "bg-sky-600 text-white shadow-sm"
+              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span>Mới vào (30 ngày)</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "NEW_HIRE" ? "bg-sky-700 text-white" : "bg-sky-50 text-sky-700"}`}>
+            {counts.newHire}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setFilterTab("MISSING_DOCS")}
+          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+            filterTab === "MISSING_DOCS"
+              ? "bg-rose-600 text-white shadow-sm"
+              : "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+          }`}
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>Hồ sơ còn thiếu</span>
+          <span className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${filterTab === "MISSING_DOCS" ? "bg-rose-700 text-white" : "bg-rose-200 text-rose-800"}`}>
+            {counts.missingDocs}
+          </span>
+        </button>
+      </div>
+
+      {/* Search & Dept Selector */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Tìm kiếm theo mã NV, họ tên, số điện thoại, email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 py-2 pr-3 pl-9 text-xs outline-none focus:border-amber-500"
+          />
+        </div>
+        <select
+          value={deptFilter}
+          onChange={(e) => setDeptFilter(e.target.value)}
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none"
+        >
+          <option value="ALL">Tất cả phòng ban</option>
+          {orgRefs?.departments.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Main Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
+              <tr>
+                {columns.code && <th className="px-4 py-3">Mã NV</th>}
+                {columns.name && <th className="px-4 py-3">Họ và tên</th>}
+                {columns.deptPos && <th className="px-4 py-3">Phòng ban &amp; Chức danh</th>}
+                {columns.dates && <th className="px-4 py-3">Ngày sinh / Vào làm</th>}
+                {columns.contacts && <th className="px-4 py-3">SĐT / CCCD</th>}
+                {columns.salary && <th className="px-4 py-3">Lương cơ bản</th>}
+                {columns.status && <th className="px-4 py-3">Trạng thái</th>}
+                <th className="px-4 py-3 text-right">Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredRows.map((emp) => {
+                const org = emp.org_assignments?.find((o) => o.is_primary) ?? emp.org_assignments?.[0];
+                return (
+                  <tr
+                    key={emp.id}
+                    onClick={() => openEmployeeDrawer(emp)}
+                    className="cursor-pointer transition hover:bg-amber-50/40"
+                  >
+                    {columns.code && (
+                      <td className="px-4 py-3 font-mono font-bold text-slate-800">
                         {emp.employee_code}
-                      </span>
-                      <div className="mt-0.5 text-sm font-bold text-slate-900">
-                        {emp.full_name}
-                      </div>
-                    </div>
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                        STATUS_BADGE[emp.employment_status] ?? "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {labelOf(EMPLOYMENT_STATUS_LABELS, emp.employment_status)}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-600">
-                    <span className="inline-flex items-center gap-1">
-                      <Building2 className="h-3.5 w-3.5 text-slate-400" />
-                      {org ? deptMap.get(org.department_id) ?? "—" : "—"}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                      {org ? locMap.get(org.location_id) ?? "—" : "—"}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <Phone className="h-3.5 w-3.5 text-slate-400" />
-                      {emp.phone_masked}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      {/* Create Employee Modal */}
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900">Thêm hồ sơ nhân sự mới</h2>
-              <button
-                type="button"
-                onClick={() => setShowCreate(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateEmployee} className="mt-4 space-y-3 text-xs">
-              {formError && (
-                <div className="rounded-xl bg-red-50 p-3 text-red-700">{formError}</div>
+                      </td>
+                    )}
+                    {columns.name && (
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-900">{emp.full_name}</div>
+                        <div className="text-[11px] text-slate-500">{emp.work_email ?? "—"}</div>
+                      </td>
+                    )}
+                    {columns.deptPos && (
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-slate-800">
+                          {org ? deptMap.get(org.department_id) ?? "—" : "—"}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {org ? posMap.get(org.position_id) ?? "—" : "—"}
+                        </div>
+                      </td>
+                    )}
+                    {columns.dates && (
+                      <td className="px-4 py-3 font-mono text-slate-600">
+                        <div>NS: {emp.dob ?? "—"}</div>
+                        <div className="text-[11px] text-slate-400">VL: {emp.hire_date}</div>
+                      </td>
+                    )}
+                    {columns.contacts && (
+                      <td className="px-4 py-3 font-mono text-slate-600">
+                        <div>ĐT: {emp.phone_masked}</div>
+                        <div className="text-[11px] text-slate-400">CCCD: {emp.national_id_masked}</div>
+                      </td>
+                    )}
+                    {columns.salary && (
+                      <td className="px-4 py-3 font-mono">
+                        <div className="font-bold text-slate-900">
+                          {emp.salary_info ? fmtVnd(emp.salary_info.base_salary) : "—"}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          BHXH: {emp.salary_info ? fmtVnd(emp.salary_info.si_salary_base) : "—"}
+                        </div>
+                      </td>
+                    )}
+                    {columns.status && (
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                            STATUS_BADGE[emp.employment_status] ?? "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {labelOf(EMPLOYMENT_STATUS_LABELS, emp.employment_status)}
+                        </span>
+                      </td>
+                    )}
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEmployeeDrawer(emp);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
+                      >
+                        Hồ sơ <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredRows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-slate-500">
+                    Không tìm thấy nhân sự phù hợp với bộ lọc hiện tại.
+                  </td>
+                </tr>
               )}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="font-medium text-slate-700">Mã nhân viên *</label>
-                  <input
-                    required
-                    placeholder="TKV-0013"
-                    value={formState.employeeCode}
-                    onChange={(e) =>
-                      setFormState({ ...formState, employeeCode: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Họ và tên *</label>
-                  <input
-                    required
-                    placeholder="Nguyễn Văn An"
-                    value={formState.fullName}
-                    onChange={(e) =>
-                      setFormState({ ...formState, fullName: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Ngày sinh</label>
-                  <input
-                    type="date"
-                    value={formState.dob}
-                    onChange={(e) =>
-                      setFormState({ ...formState, dob: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Giới tính</label>
-                  <select
-                    value={formState.gender}
-                    onChange={(e) =>
-                      setFormState({ ...formState, gender: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="MALE">Nam</option>
-                    <option value="FEMALE">Nữ</option>
-                    <option value="OTHER">Khác</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Số điện thoại</label>
-                  <input
-                    placeholder="0909123456"
-                    value={formState.phone}
-                    onChange={(e) =>
-                      setFormState({ ...formState, phone: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Email công việc</label>
-                  <input
-                    type="email"
-                    placeholder="an.nv@thekyvang.vn"
-                    value={formState.workEmail}
-                    onChange={(e) =>
-                      setFormState({ ...formState, workEmail: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">CCCD (Mã hóa AES-256)</label>
-                  <input
-                    placeholder="072099001234"
-                    value={formState.nationalId}
-                    onChange={(e) =>
-                      setFormState({ ...formState, nationalId: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Ngày vào làm *</label>
-                  <input
-                    type="date"
-                    required
-                    value={formState.hireDate}
-                    onChange={(e) =>
-                      setFormState({ ...formState, hireDate: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Trạng thái</label>
-                  <select
-                    value={formState.employmentStatus}
-                    onChange={(e) =>
-                      setFormState({ ...formState, employmentStatus: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="ACTIVE">Đang làm việc (Chính thức)</option>
-                    <option value="PROBATION">Đang thử việc</option>
-                    <option value="ONBOARDING">Đang nhận việc</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Phòng ban</label>
-                  <select
-                    value={formState.departmentId}
-                    onChange={(e) =>
-                      setFormState({ ...formState, departmentId: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {orgRefs?.departments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Chức danh</label>
-                  <select
-                    value={formState.positionId}
-                    onChange={(e) =>
-                      setFormState({ ...formState, positionId: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {orgRefs?.positions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Địa điểm làm việc</label>
-                  <select
-                    value={formState.locationId}
-                    onChange={(e) =>
-                      setFormState({ ...formState, locationId: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    {orgRefs?.locations.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowCreate(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-xl bg-amber-600 px-4 py-2 font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-                >
-                  {saving ? "Đang lưu..." : "Tạo hồ sơ"}
-                </button>
-              </div>
-            </form>
-          </div>
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
 
-      {/* Slide-over Employee Detail & Edit Drawer */}
+      {/* Slide-over Employee Detail Drawer with Document Checklist & Timeline */}
       {selectedEmp && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 backdrop-blur-xs">
-          <div className="h-full w-full max-w-xl overflow-y-auto bg-white p-6 shadow-2xl">
+          <div className="h-full w-full max-w-2xl overflow-y-auto bg-white p-6 shadow-2xl">
+            {/* Drawer Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
                 <span className="font-mono text-xs font-semibold text-amber-700">
                   {selectedEmp.employee_code} • {labelOf(GENDER_LABELS, selectedEmp.gender)}
                 </span>
-                <h2 className="text-lg font-bold text-slate-900">{selectedEmp.full_name}</h2>
+                <h2 className="text-xl font-black text-slate-900">{selectedEmp.full_name}</h2>
               </div>
               <button
                 type="button"
@@ -915,163 +933,552 @@ export default function EmployeesPage() {
               </button>
             </div>
 
-            {/* Snapshot Cards: Contract, Salary, Statutory IDs */}
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-                  <FileSignature className="h-3.5 w-3.5 text-amber-600" />
-                  Hợp đồng hiệu lực
-                </div>
-                <div className="mt-1 font-mono font-bold text-slate-900">
-                  {selectedEmp.active_contract?.contract_no ?? "Chưa có HĐ"}
-                </div>
-                <div className="text-[11px] text-slate-600">
-                  {selectedEmp.active_contract
-                    ? `${labelOf(CONTRACT_TYPE_LABELS, selectedEmp.active_contract.contract_type)} (${selectedEmp.active_contract.effective_from} → ${selectedEmp.active_contract.effective_to ?? "Không thời hạn"})`
-                    : "Vui lòng lập HĐLĐ"}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-                  <Wallet className="h-3.5 w-3.5 text-emerald-600" />
-                  Lương &amp; Bảo hiểm
-                </div>
-                <div className="mt-1 font-mono font-bold text-emerald-700">
-                  {selectedEmp.salary_info
-                    ? fmtVnd(selectedEmp.salary_info.base_salary)
-                    : "Chưa thiết lập"}
-                </div>
-                <div className="text-[11px] text-slate-600">
-                  BHXH: {selectedEmp.salary_info ? fmtVnd(selectedEmp.salary_info.si_salary_base) : "—"} • NPT: {selectedEmp.dependent_count ?? 0}
-                </div>
-              </div>
+            {/* Drawer Tab Navigation */}
+            <div className="mt-4 flex border-b border-slate-200 text-xs font-semibold text-slate-600">
+              <button
+                onClick={() => setDrawerTab("PROFILE")}
+                className={`border-b-2 px-4 py-2.5 transition-all ${
+                  drawerTab === "PROFILE"
+                    ? "border-amber-600 font-bold text-amber-700"
+                    : "border-transparent hover:text-slate-900"
+                }`}
+              >
+                Thông tin &amp; Pháp lý
+              </button>
+              <button
+                onClick={() => setDrawerTab("DOCUMENTS")}
+                className={`border-b-2 px-4 py-2.5 transition-all ${
+                  drawerTab === "DOCUMENTS"
+                    ? "border-amber-600 font-bold text-amber-700"
+                    : "border-transparent hover:text-slate-900"
+                }`}
+              >
+                📁 Hồ sơ &amp; Giấy tờ (5)
+              </button>
+              <button
+                onClick={() => setDrawerTab("TIMELINE")}
+                className={`border-b-2 px-4 py-2.5 transition-all ${
+                  drawerTab === "TIMELINE"
+                    ? "border-amber-600 font-bold text-amber-700"
+                    : "border-transparent hover:text-slate-900"
+                }`}
+              >
+                🔎 Lịch sử &amp; Diễn biến
+              </button>
             </div>
 
-            <form onSubmit={handleUpdateEmployee} className="mt-5 space-y-4 text-xs">
-              <div className="flex items-center gap-1.5 font-semibold text-slate-900">
-                <Shield className="h-3.5 w-3.5 text-amber-600" />
-                Thông tin cá nhân, Pháp lý &amp; Điều chuyển
-              </div>
+            {/* TAB 1: PROFILE & LEGAL */}
+            {drawerTab === "PROFILE" && (
+              <form onSubmit={handleUpdateEmployee} className="mt-5 space-y-4 text-xs">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="font-medium text-slate-700">Họ và tên</label>
+                    <input
+                      required
+                      value={editState.fullName}
+                      onChange={(e) => setEditState({ ...editState, fullName: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-medium text-slate-700">Trạng thái làm việc</label>
+                    <select
+                      value={editState.employmentStatus}
+                      onChange={(e) => setEditState({ ...editState, employmentStatus: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      <option value="ACTIVE">Đang làm việc (Chính thức)</option>
+                      <option value="PROBATION">Đang thử việc</option>
+                      <option value="ONBOARDING">Đang nhận việc</option>
+                      <option value="ON_LEAVE">Nghỉ thai sản / tạm nghỉ</option>
+                      <option value="TERMINATED">Đã nghỉ việc (Kích hoạt checklist bàn giao)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-medium text-slate-700">Ngày sinh</label>
+                    <input
+                      type="date"
+                      value={editState.dob}
+                      onChange={(e) => setEditState({ ...editState, dob: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-medium text-slate-700">Ngày vào làm</label>
+                    <input
+                      type="date"
+                      value={editState.hireDate}
+                      onChange={(e) => setEditState({ ...editState, hireDate: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-medium text-slate-700">Số điện thoại (10 chữ số)</label>
+                    <input
+                      placeholder={selectedEmp.phone_masked}
+                      value={editState.phone}
+                      onChange={(e) => setEditState({ ...editState, phone: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-medium text-slate-700">Email công việc</label>
+                    <input
+                      type="email"
+                      value={editState.workEmail}
+                      onChange={(e) => setEditState({ ...editState, workEmail: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
 
+                {/* Salary Box */}
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5">
+                  <div className="mb-2 flex items-center gap-1.5 font-bold text-emerald-900">
+                    <Wallet className="h-4 w-4 text-emerald-600" />
+                    Lương, BHXH &amp; Người phụ thuộc
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <label className="font-medium text-slate-700">Lương cơ bản (đ)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100000}
+                        value={editState.baseSalary}
+                        onChange={(e) => setEditState({ ...editState, baseSalary: e.target.value })}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-medium text-slate-700">Lương đóng BHXH (đ)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100000}
+                        value={editState.siSalaryBase}
+                        onChange={(e) => setEditState({ ...editState, siSalaryBase: e.target.value })}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-medium text-slate-700">Số người phụ thuộc</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={editState.dependentCount}
+                        onChange={(e) => setEditState({ ...editState, dependentCount: e.target.value })}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* PDPL Unmask Box */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900">Bảo mật dữ liệu cá nhân (PDPL)</span>
+                    <span className="font-mono text-slate-600">CCCD: {selectedEmp.national_id_masked}</span>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      placeholder="Nhập lý do xem CCCD (ghi nhật ký Audit)..."
+                      value={unmaskReason}
+                      onChange={(e) => setUnmaskReason(e.target.value)}
+                      className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleUnmask}
+                      className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      Giải mã
+                    </button>
+                  </div>
+                  {unmaskedResult && (
+                    <div className="mt-2 font-mono font-bold text-emerald-800">
+                      Số CCCD đầy đủ: {unmaskedResult}
+                    </div>
+                  )}
+                  {unmaskError && <div className="mt-1 text-rose-600">{unmaskError}</div>}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t">
+                  <button
+                    type="submit"
+                    disabled={editSaving}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4" />
+                    {editSaving ? "Đang lưu..." : "Lưu thay đổi"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* TAB 2: DOCUMENTS CHECKLIST & SCAN VAULT */}
+            {drawerTab === "DOCUMENTS" && (
+              <div className="mt-5 space-y-4">
+                <div className="rounded-xl bg-amber-50/70 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold">Bảng kiểm soát giấy tờ &amp; Kho lưu trữ bản scan</div>
+                  <div className="mt-0.5 text-slate-600">
+                    Bấm vào nút &quot;Xem bản scan&quot; để phóng to ảnh giấy tờ hồ sơ của nhân sự.
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {sampleDocuments.map((doc) => {
+                    const isSubmitted = doc.status === "SUBMITTED";
+                    return (
+                      <div
+                        key={doc.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3.5 hover:bg-slate-50/60"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-full ${isSubmitted ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+                            {isSubmitted ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-xs">{doc.title}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">
+                              {isSubmitted ? `Ngày nộp: ${doc.submittedDate} • ${doc.note}` : "Chưa nộp bản sao chứng thực"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          {isSubmitted ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveScanUrl({ title: doc.title, url: doc.scanUrl })}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              <Eye className="h-3.5 w-3.5 text-slate-500" />
+                              Xem bản scan
+                            </button>
+                          ) : (
+                            <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700">
+                              Còn thiếu
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: TIMELINE & QUICK VIEW */}
+            {drawerTab === "TIMELINE" && (
+              <div className="mt-5 space-y-4 text-xs">
+                <div className="text-slate-500">
+                  Bấm vào từng mốc sự kiện để xem chi tiết ngay lập tức:
+                </div>
+
+                <div className="relative border-l-2 border-slate-200 pl-4 space-y-6">
+                  {/* Event 1: Contract */}
+                  <div className="relative group cursor-pointer" onClick={() => setQuickViewItem({
+                    title: "Chi tiết Hợp đồng lao động",
+                    content: {
+                      "Mã hợp đồng": selectedEmp.active_contract?.contract_no ?? "HD-2026-TKV",
+                      "Loại hợp đồng": labelOf(CONTRACT_TYPE_LABELS, selectedEmp.active_contract?.contract_type ?? "INDEFINITE"),
+                      "Hiệu lực từ": selectedEmp.active_contract?.effective_from ?? selectedEmp.hire_date,
+                      "Hiệu lực đến": selectedEmp.active_contract?.effective_to ?? "Không xác định thời hạn",
+                      "Lương thỏa thuận": fmtVnd(selectedEmp.salary_info?.base_salary ?? 15000000),
+                      "Địa điểm": "Trụ sở chính Công ty Thế Kỷ Vàng (Tây Ninh)",
+                    }
+                  })}>
+                    <div className="absolute -left-[21px] top-0.5 h-3 w-3 rounded-full bg-amber-500 ring-4 ring-white"></div>
+                    <div className="font-bold text-slate-900">Mốc ký kết Hợp đồng lao động</div>
+                    <div className="text-[11px] text-slate-500">{selectedEmp.hire_date}</div>
+                    <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-slate-700">
+                      Số HĐ: {selectedEmp.active_contract?.contract_no ?? "HD-2026-001"} • Bấm để xem chi tiết
+                    </div>
+                  </div>
+
+                  {/* Event 2: Salary Decision */}
+                  <div className="relative group cursor-pointer" onClick={() => setQuickViewItem({
+                    title: "Chi tiết Quyết định mức lương",
+                    content: {
+                      "Số quyết định": `QĐ-L/${selectedEmp.employee_code}/2026`,
+                      "Ngày ban hành": selectedEmp.hire_date,
+                      "Mức lương chính thức": fmtVnd(selectedEmp.salary_info?.base_salary ?? 15000000),
+                      "Mức lương đóng BHXH": fmtVnd(selectedEmp.salary_info?.si_salary_base ?? 15000000),
+                      "Phụ cấp ăn trưa": "1.000.000 ₫ (Miễn thuế)",
+                      "Phụ cấp xăng xe & điện thoại": "500.000 ₫",
+                    }
+                  })}>
+                    <div className="absolute -left-[21px] top-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-4 ring-white"></div>
+                    <div className="font-bold text-slate-900">Quyết định bổ nhiệm &amp; mức lương</div>
+                    <div className="text-[11px] text-slate-500">{selectedEmp.hire_date}</div>
+                    <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-slate-700">
+                      Mức lương cơ bản: {fmtVnd(selectedEmp.salary_info?.base_salary ?? 15000000)} • Bấm để xem chi tiết
+                    </div>
+                  </div>
+
+                  {/* Event 3: Latest Payslip */}
+                  <div className="relative group cursor-pointer" onClick={() => setQuickViewItem({
+                    title: "Phiếu lương gần nhất (Tháng 10/2026)",
+                    content: {
+                      "Kỳ lương": "Tháng 10/2026 (2026-M10)",
+                      "Số ngày công chuẩn": "22 ngày",
+                      "Số ngày công thực tế": "22 ngày",
+                      "Lương cơ bản chi trả": fmtVnd(selectedEmp.salary_info?.base_salary ?? 15000000),
+                      "Trừ BHXH (10.5%)": fmtVnd(Math.round((selectedEmp.salary_info?.si_salary_base ?? 15000000) * 0.105)),
+                      "Giảm trừ gia cảnh": "15.500.000 ₫ (Bản thân)",
+                      "Thực lĩnh kỳ 2": fmtVnd(Math.round((selectedEmp.salary_info?.base_salary ?? 15000000) * 0.5)),
+                      "Trạng thái": "ĐÃ CHI TRẢ (PAID)",
+                    }
+                  })}>
+                    <div className="absolute -left-[21px] top-0.5 h-3 w-3 rounded-full bg-sky-500 ring-4 ring-white"></div>
+                    <div className="font-bold text-slate-900">Tháng lương hoàn tất gần nhất (10/2026)</div>
+                    <div className="text-[11px] text-slate-500">05/11/2026</div>
+                    <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-slate-700">
+                      Trạng thái: Đã quyết toán chuyển khoản • Bấm để xem chi tiết
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox / Modal xem ảnh scan phóng to */}
+      {activeScanUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md">
+          <div className="relative max-h-[90vh] max-w-3xl overflow-hidden rounded-2xl bg-white p-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b">
+              <h3 className="font-bold text-slate-900 text-sm">{activeScanUrl.title}</h3>
+              <button
+                type="button"
+                onClick={() => setActiveScanUrl(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-3 flex items-center justify-center overflow-auto max-h-[75vh]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={activeScanUrl.url}
+                alt={activeScanUrl.title}
+                className="rounded-lg object-contain max-h-[70vh] shadow-sm"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick View Popup for Timeline */}
+      {quickViewItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="font-bold text-slate-900 text-sm">{quickViewItem.title}</h3>
+              <button
+                type="button"
+                onClick={() => setQuickViewItem(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-3 space-y-2 text-xs">
+              {Object.entries(quickViewItem.content).map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between py-1 border-b border-slate-50">
+                  <span className="text-slate-500">{k}</span>
+                  <span className="font-bold text-slate-800">{String(v)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setQuickViewItem(null)}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Offboarding Checklist Modal (Nhắc việc khi cho một người nghỉ việc) */}
+      {showOffboardingModal && selectedEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center gap-2 text-rose-600 font-bold text-base">
+              <AlertTriangle className="h-5 w-5" />
+              Thủ tục nghỉ việc &amp; Bàn giao: {selectedEmp.full_name}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Chuyển trạng thái sang &quot;Đã nghỉ việc&quot; yêu cầu bộ phận Nhân sự kiểm tra và hoàn tất 4 việc sau:
+            </p>
+
+            <div className="mt-4 space-y-3 rounded-xl border border-rose-100 bg-rose-50/50 p-4 text-xs">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={offboardingChecklist.assetReturned}
+                  onChange={(e) => setOffboardingChecklist({ ...offboardingChecklist, assetReturned: e.target.checked })}
+                  className="mt-0.5 rounded text-rose-600"
+                />
+                <div>
+                  <span className="font-bold text-slate-800">1. Thu hồi tài sản &amp; công cụ làm việc:</span>
+                  <div className="text-slate-500 text-[11px]">Laptop, thẻ ra vào, chìa khóa kho, đồng phục, tài liệu mật.</div>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={offboardingChecklist.siBookClosed}
+                  onChange={(e) => setOffboardingChecklist({ ...offboardingChecklist, siBookClosed: e.target.checked })}
+                  className="mt-0.5 rounded text-rose-600"
+                />
+                <div>
+                  <span className="font-bold text-slate-800">2. Chốt sổ BHXH &amp; BHYT:</span>
+                  <div className="text-slate-500 text-[11px]">Báo giảm BHXH với cơ quan BHXH tỉnh Tây Ninh, in tờ rời chốt sổ bàn giao.</div>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={offboardingChecklist.leaveSettled}
+                  onChange={(e) => setOffboardingChecklist({ ...offboardingChecklist, leaveSettled: e.target.checked })}
+                  className="mt-0.5 rounded text-rose-600"
+                />
+                <div>
+                  <span className="font-bold text-slate-800">3. Quyết toán ngày phép &amp; trợ cấp thôi việc:</span>
+                  <div className="text-slate-500 text-[11px]">Chi trả ngày phép năm chưa nghỉ, tiền lương tháng cuối cùng.</div>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={offboardingChecklist.accountLocked}
+                  onChange={(e) => setOffboardingChecklist({ ...offboardingChecklist, accountLocked: e.target.checked })}
+                  className="mt-0.5 rounded text-rose-600"
+                />
+                <div>
+                  <span className="font-bold text-slate-800">4. Khóa tài khoản hệ thống:</span>
+                  <div className="text-slate-500 text-[11px]">Vô hiệu hóa quyền đăng nhập app HRM, Zalo nội bộ, email công ty.</div>
+                </div>
+              </label>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2 border-t pt-3">
+              <button
+                type="button"
+                onClick={() => setShowOffboardingModal(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={executeEmployeeUpdate}
+                className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-rose-700"
+              >
+                Xác nhận cho nghỉ việc
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Employee Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h2 className="text-base font-bold text-slate-900">Thêm hồ sơ nhân sự mới</h2>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateEmployee} className="mt-4 space-y-3 text-xs">
+              {formError && (
+                <div className="rounded-xl bg-red-50 p-3 text-red-700 font-semibold">{formError}</div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="font-medium text-slate-700">Họ và tên</label>
+                  <label className="font-semibold text-slate-700">Mã nhân viên *</label>
                   <input
                     required
-                    value={editState.fullName}
-                    onChange={(e) => setEditState({ ...editState, fullName: e.target.value })}
+                    placeholder="VD: TKV-0051"
+                    value={formState.employeeCode}
+                    onChange={(e) => setFormState({ ...formState, employeeCode: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700">Họ và tên *</label>
+                  <input
+                    required
+                    placeholder="Nguyễn Văn An"
+                    value={formState.fullName}
+                    onChange={(e) => setFormState({ ...formState, fullName: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="font-medium text-slate-700">Giới tính</label>
-                  <select
-                    value={editState.gender}
-                    onChange={(e) => setEditState({ ...editState, gender: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="MALE">Nam</option>
-                    <option value="FEMALE">Nữ</option>
-                    <option value="OTHER">Khác</option>
-                  </select>
+                  <label className="font-semibold text-slate-700">Số CCCD (12 số) *</label>
+                  <input
+                    required
+                    placeholder="072089001234"
+                    maxLength={12}
+                    value={formState.nationalId}
+                    onChange={(e) => setFormState({ ...formState, nationalId: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono"
+                  />
                 </div>
                 <div>
-                  <label className="font-medium text-slate-700">Ngày tháng năm sinh</label>
+                  <label className="font-semibold text-slate-700">Số điện thoại (10 số) *</label>
+                  <input
+                    required
+                    placeholder="0908123456"
+                    maxLength={10}
+                    value={formState.phone}
+                    onChange={(e) => setFormState({ ...formState, phone: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700">Ngày sinh</label>
                   <input
                     type="date"
-                    value={editState.dob}
-                    onChange={(e) => setEditState({ ...editState, dob: e.target.value })}
+                    value={formState.dob}
+                    onChange={(e) => setFormState({ ...formState, dob: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="font-medium text-slate-700">Ngày vào làm</label>
+                  <label className="font-semibold text-slate-700">Ngày vào làm *</label>
                   <input
                     type="date"
-                    value={editState.hireDate}
-                    onChange={(e) => setEditState({ ...editState, hireDate: e.target.value })}
+                    required
+                    value={formState.hireDate}
+                    onChange={(e) => setFormState({ ...formState, hireDate: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="font-medium text-slate-700">
-                    Số điện thoại (hiện tại: {selectedEmp.phone_masked})
-                  </label>
-                  <input
-                    placeholder="Nhập SĐT mới để cập nhật..."
-                    value={editState.phone}
-                    onChange={(e) => setEditState({ ...editState, phone: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Email công việc</label>
-                  <input
-                    type="email"
-                    value={editState.workEmail}
-                    onChange={(e) =>
-                      setEditState({ ...editState, workEmail: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Mã số BHXH (10 số)</label>
-                  <input
-                    placeholder="7212345678"
-                    value={editState.socialInsuranceNo}
-                    onChange={(e) =>
-                      setEditState({ ...editState, socialInsuranceNo: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Mã thẻ BHYT</label>
-                  <input
-                    placeholder="DN4727212345678"
-                    value={editState.healthInsuranceNo}
-                    onChange={(e) =>
-                      setEditState({ ...editState, healthInsuranceNo: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Mã số thuế TNCN</label>
-                  <input
-                    placeholder="8123456789"
-                    value={editState.pitTaxCode}
-                    onChange={(e) =>
-                      setEditState({ ...editState, pitTaxCode: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Trạng thái làm việc</label>
+                  <label className="font-semibold text-slate-700">Phòng ban</label>
                   <select
-                    value={editState.employmentStatus}
-                    onChange={(e) =>
-                      setEditState({ ...editState, employmentStatus: e.target.value })
-                    }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="ACTIVE">Đang làm việc (Chính thức)</option>
-                    <option value="PROBATION">Đang thử việc</option>
-                    <option value="ONBOARDING">Đang nhận việc</option>
-                    <option value="ON_LEAVE">Tạm nghỉ / Thai sản</option>
-                    <option value="TERMINATED">Đã nghỉ việc</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-medium text-slate-700">Phòng ban</label>
-                  <select
-                    value={editState.departmentId}
-                    onChange={(e) =>
-                      setEditState({ ...editState, departmentId: e.target.value })
-                    }
+                    value={formState.departmentId}
+                    onChange={(e) => setFormState({ ...formState, departmentId: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                   >
                     {orgRefs?.departments.map((d) => (
@@ -1082,12 +1489,10 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="font-medium text-slate-700">Chức danh</label>
+                  <label className="font-semibold text-slate-700">Chức danh</label>
                   <select
-                    value={editState.positionId}
-                    onChange={(e) =>
-                      setEditState({ ...editState, positionId: e.target.value })
-                    }
+                    value={formState.positionId}
+                    onChange={(e) => setFormState({ ...formState, positionId: e.target.value })}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                   >
                     {orgRefs?.positions.map((p) => (
@@ -1099,119 +1504,23 @@ export default function EmployeesPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="font-medium text-slate-700">Địa điểm làm việc</label>
-                <select
-                  value={editState.locationId}
-                  onChange={(e) =>
-                    setEditState({ ...editState, locationId: e.target.value })
-                  }
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowCreate(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  {orgRefs?.locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-                <div className="mb-2 flex items-center gap-1.5 font-semibold text-emerald-900">
-                  <Wallet className="h-3.5 w-3.5 text-emerald-600" />
-                  Cập nhật Mức lương, BHXH &amp; Người phụ thuộc
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div>
-                    <label className="font-medium text-slate-700">Lương cơ bản (đ)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={100000}
-                      placeholder="15000000"
-                      value={editState.baseSalary}
-                      onChange={(e) =>
-                        setEditState({ ...editState, baseSalary: e.target.value })
-                      }
-                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-medium text-slate-700">Lương đóng BHXH (đ)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={100000}
-                      placeholder="15000000"
-                      value={editState.siSalaryBase}
-                      onChange={(e) =>
-                        setEditState({ ...editState, siSalaryBase: e.target.value })
-                      }
-                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-medium text-slate-700">Số người phụ thuộc</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={20}
-                      value={editState.dependentCount}
-                      onChange={(e) =>
-                        setEditState({ ...editState, dependentCount: e.target.value })
-                      }
-                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={editSaving}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                <Save className="h-3.5 w-3.5" />
-                {editSaving ? "Đang lưu..." : "Lưu toàn bộ hồ sơ"}
-              </button>
-            </form>
-
-            {/* PDPL Unmask Section */}
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-900">
-                  Bảo mật dữ liệu cá nhân (PDPL)
-                </span>
-                <span className="font-mono text-xs text-slate-600">
-                  CCCD: {selectedEmp.national_id_masked}
-                </span>
-              </div>
-              <form onSubmit={handleUnmask} className="mt-3 space-y-2">
-                <input
-                  required
-                  minLength={5}
-                  placeholder="Nhập lý do giải mã CCCD (bắt buộc ghi Audit Log)..."
-                  value={unmaskReason}
-                  onChange={(e) => setUnmaskReason(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs"
-                />
-                {unmaskError && (
-                  <div className="text-xs text-red-600">{unmaskError}</div>
-                )}
-                {unmaskedResult && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 font-mono text-sm font-bold text-emerald-800">
-                    CCCD: {unmaskedResult}
-                  </div>
-                )}
+                  Hủy
+                </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-100"
+                  disabled={saving}
+                  className="rounded-xl bg-amber-600 px-5 py-2 font-bold text-white hover:bg-amber-700 disabled:opacity-50"
                 >
-                  <Eye className="h-3.5 w-3.5" />
-                  Giải mã CCCD
+                  {saving ? "Đang lưu..." : "Tạo hồ sơ"}
                 </button>
-              </form>
-            </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

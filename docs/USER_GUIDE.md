@@ -121,3 +121,4 @@
 ### 3. Giám sát Tuân thủ & Nhật ký kiểm toán (Audit Trail)
 - Vào **Quản trị** ➔ **Nhật ký Audit**.
 - Theo dõi toàn bộ lịch sử truy vết bảo mật: Xem lương, xuất báo cáo PII, mở khóa kỳ lương, thay đổi phân quyền.
+

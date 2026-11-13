@@ -65,3 +65,27 @@ Tất cả các thay đổi tuân thủ nghiêm ngặt nguyên tắc: **"Ít tí
 - Kết chuyển thành công kỳ lương Tháng 10/2026 cho 50 nhân sự với tổng quỹ lương 980.432.387 ₫ và chuyển trạng thái `PAID`.
 - Viết bộ kiểm thử tích hợp đầu cuối `e2e-workflow.test.ts` kiểm chứng toàn bộ chu trình nghiệp vụ qua 4 vai trò.
 - Xuất bản tài liệu `docs/USER_GUIDE.md` ngắn gọn cho 4 vai trò và hoàn tất kiểm tra chất lượng.
+
+### 🌟 BỔ SUNG & NÂNG CẤP TRẢI NGHIỆM ĐỒNG BỘ:
+1. **Sơ đồ tổ chức (`/org`) chuẩn thiết kế trực quan:**
+   - Vẽ lại sơ đồ tổ chức giống hệt hình ảnh mẫu: Thanh điều khiển đơn vị, ngày tính đến, 5 thẻ thống kê KPI (Số bộ phận, Người đang làm/đi làm, Định biên, Vị trí trống, Bộ phận thiếu người phụ trách).
+   - Thẻ Ban Giám đốc và các phòng ban con liên kết nhánh ngang dọc, hiển thị người phụ trách, tỷ lệ lấp đầy định biên, danh sách nhân sự kèm nhãn trạng thái (Mới, Thử việc, Thai sản).
+   - Thao tác thêm, sửa, chuyển phòng ban trực tiếp trên sơ đồ và dạng bảng.
+2. **Danh sách & Hồ sơ nhân sự (`/employees`):**
+   - Lọc nhanh có số đếm tức thời (Đang làm, Thử việc, Thai sản, Mới vào 30 ngày, Thiếu hồ sơ).
+   - Tự chọn cột hiển thị và xuất Excel đúng theo chế độ đang xem (WYSIWYG).
+   - Kiểm tra trùng CCCD (12 số), trùng SĐT (10 số), trùng mã nhân viên.
+   - Checklist nhắc việc 4 bước khi cho một người nghỉ việc (`TERMINATED`).
+   - Bảng kiểm soát giấy tờ hồ sơ và Kho lưu trữ bản scan/ảnh phóng to (Lightbox).
+   - Xem nhanh dòng thời gian (mốc hợp đồng, quyết định lương, phiếu lương) mở popup xem ngay không cần tìm kiếm.
+3. **Quản trị Hợp đồng Lao động (`/contracts`):**
+   - Lọc danh sách người cần ký trong 30, 60, 90 ngày tới và quá hạn.
+   - Gợi ý loại hợp đồng ký tiếp thông minh theo Bộ luật Lao động 2019.
+   - Kiểm tra tự động trần thời gian thử việc (tối đa 60 ngày), lương thử việc (tối thiểu 85%), chặn ký quá 2 lần HĐ xác định thời hạn.
+   - Soạn thảo mẫu hợp đồng với biến merge tags và xuất file Word (.doc) điền sẵn thông tin.
+4. **Việc cần xử lý gọn hơn (`/approvals`):**
+   - Lọc theo thời hạn (Trong 7 ngày tới mặc định, 14 ngày, 30 ngày, Quá hạn).
+   - Việc gấp và quá hạn luôn hiển thị ghim trên đầu không bị lọc mất.
+   - Gộp việc thiếu hồ sơ thành một nhiệm vụ tổng hợp mở Drawer danh sách chi tiết.
+
+
