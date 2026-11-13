@@ -101,7 +101,7 @@ export async function GET(req: Request) {
     // 2. Fetch employees
     const { data: emps, error: empErr } = await admin
       .from("employees")
-      .select("id, employee_code, full_name, employment_status, org_assignments(department_id, is_primary)")
+      .select("id, employee_code, full_name, employment_status, org_assignments!org_assignments_employee_id_fkey(department_id, is_primary)")
       .order("employee_code");
     if (empErr) throw empErr;
 
@@ -388,3 +388,4 @@ export async function PATCH(req: Request) {
     return handleApiError(err);
   }
 }
+

@@ -71,7 +71,7 @@ export async function GET() {
 
     let empQuery = admin
       .from("employees")
-      .select("id, employee_code, full_name, hire_date, org_assignments(department_id, is_primary)")
+      .select("id, employee_code, full_name, hire_date, org_assignments!org_assignments_employee_id_fkey(department_id, is_primary)")
       .order("employee_code");
 
     if (!isManagerOrHr && ctx.employeeId) {
