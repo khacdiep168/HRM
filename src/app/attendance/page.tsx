@@ -15,9 +15,13 @@ import {
   CalendarCheck2,
   Upload,
   Download,
+  Calendar,
+  Table,
 } from "lucide-react";
 import { DEVICE_STATUS_LABELS, labelOf } from "@/lib/i18n/vi-labels";
 import { buildUtf8BomCsv, parseCsvText } from "@/lib/integrations/csv-helper";
+import { DetailedTimesheetMatrix } from "@/components/attendance/DetailedTimesheetMatrix";
+import { HolidaySettingsView } from "@/components/attendance/HolidaySettingsView";
 
 interface LocationOption {
   id: string;
@@ -85,8 +89,8 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [reloadTick, setReloadTick] = useState(0);
   const [activeTab, setActiveTab] = useState<
-    "gps" | "devices" | "sessions" | "shifts" | "exceptions" | "summary"
-  >("gps");
+    "matrix" | "holidays" | "gps" | "devices" | "sessions" | "shifts" | "exceptions" | "summary"
+  >("matrix");
 
   // GPS Check-in form
   const [locationId, setLocationId] = useState("");
@@ -762,6 +766,30 @@ export default function AttendancePage() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
+          onClick={() => setActiveTab("matrix")}
+          className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold ${
+            activeTab === "matrix"
+              ? "bg-slate-900 text-white"
+              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          <Table className="h-3.5 w-3.5" />
+          Bảng chấm công chi tiết
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("holidays")}
+          className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold ${
+            activeTab === "holidays"
+              ? "bg-slate-900 text-white"
+              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          <Calendar className="h-3.5 w-3.5" />
+          Lịch nghỉ lễ, tết
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("gps")}
           className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold ${
             activeTab === "gps"
@@ -833,6 +861,12 @@ export default function AttendancePage() {
           Bảng tổng hợp công ({summary.length} NV)
         </button>
       </div>
+
+      {/* Tab: Bảng chấm công chi tiết theo ngày (Screenshot 3) */}
+      {activeTab === "matrix" && <DetailedTimesheetMatrix />}
+
+      {/* Tab: Thiết lập Lịch nghỉ lễ, tết (Screenshot 2) */}
+      {activeTab === "holidays" && <HolidaySettingsView />}
 
       {/* Tab 1: GPS Check-in & Shifts */}
       {activeTab === "gps" && (

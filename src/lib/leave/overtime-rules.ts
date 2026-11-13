@@ -107,3 +107,106 @@ export function calcAvailableLeaveDays(params: {
   };
 }
 
+/**
+ * Calculates employee seniority from hire date per Vietnam Labor Code (BLLĐ 2019) Điều 114:
+ * "Cứ đủ 05 năm làm việc cho một người sử dụng lao động thì số ngày nghỉ hằng năm... được tăng thêm tương ứng 01 ngày."
+ */
+export function computeSeniority(hireDateStr: string, asOfDate: Date = new Date()): {
+  years: number;
+  months: number;
+  totalMonths: number;
+  bonusDays: number;
+  display: string;
+} {
+  const hire = new Date(hireDateStr);
+  if (isNaN(hire.getTime())) {
+    return { years: 0, months: 0, totalMonths: 0, bonusDays: 0, display: "0 năm" };
+  }
+
+  let years = asOfDate.getFullYear() - hire.getFullYear();
+  let months = asOfDate.getMonth() - hire.getMonth();
+  if (asOfDate.getDate() < hire.getDate()) {
+    months -= 1;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  years = Math.max(0, years);
+  months = Math.max(0, months);
+  const totalMonths = years * 12 + months;
+
+  // Điều 114 BLLĐ 2019: Cứ đủ 5 năm thâm niên được tăng thêm 1 ngày phép
+  const bonusDays = Math.floor(years / 5);
+
+  const display = years > 0 ? `${years} năm` : `${months} tháng`;
+  return { years, months, totalMonths, bonusDays, display };
+}
+
+/**
+ * Calculates annual leave entitlement based on:
+ * - Điều 113 BLLĐ 2019: Base 12 days (normal), 14 days (hazardous/heavy), 16 days (extremely hazardous)
+ * - Điều 114 BLLĐ 2019: Seniority bonus (+1 day per full 5 years)
+ * - Điều 66 Nghị định 145/2020/NĐ-CP: Prorated quota for employees working less than 12 months in the year
+ */
+export function computeAnnualLeaveQuota(params: {
+  baseDays: number;
+  hireDate: string;
+  year: number;
+  asOfDate?: Date;
+}): {
+  seniorityYears: number;
+  seniorityMonths: number;
+  seniorityDisplay: string;
+  bonusDays: number;
+  totalEntitledDays: number;
+  isProrated: boolean;
+  workedMonthsInYear: number;
+} {
+  const asOf = params.asOfDate ?? new Date();
+  const seniority = computeSeniority(params.hireDate, asOf);
+  const hire = new Date(params.hireDate);
+  const hireYear = hire.getFullYear();
+
+  if (hireYear > params.year) {
+    return {
+      seniorityYears: 0,
+      seniorityMonths: 0,
+      seniorityDisplay: "0 năm",
+      bonusDays: 0,
+      totalEntitledDays: 0,
+      isProrated: true,
+      workedMonthsInYear: 0,
+    };
+  }
+
+  if (hireYear === params.year) {
+    // Chưa đủ 12 tháng làm việc trong năm: Điều 66 NĐ 145/2020
+    const hireMonth = hire.getMonth() + 1; // 1-12
+    const workedMonths = 12 - hireMonth + (hire.getDate() <= 15 ? 1 : 0);
+    const cappedMonths = Math.max(1, Math.min(12, workedMonths));
+    const rawDays = ((params.baseDays + seniority.bonusDays) / 12) * cappedMonths;
+    const totalEntitledDays = Math.round(rawDays);
+    return {
+      seniorityYears: seniority.years,
+      seniorityMonths: seniority.months,
+      seniorityDisplay: seniority.display,
+      bonusDays: seniority.bonusDays,
+      totalEntitledDays,
+      isProrated: true,
+      workedMonthsInYear: cappedMonths,
+    };
+  }
+
+  // Đã làm việc từ các năm trước: đủ 12 tháng
+  return {
+    seniorityYears: seniority.years,
+    seniorityMonths: seniority.months,
+    seniorityDisplay: seniority.display,
+    bonusDays: seniority.bonusDays,
+    totalEntitledDays: params.baseDays + seniority.bonusDays,
+    isProrated: false,
+    workedMonthsInYear: 12,
+  };
+}
+

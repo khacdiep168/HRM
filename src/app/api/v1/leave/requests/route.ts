@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { calcAvailableLeaveDays } from "@/lib/leave/overtime-rules";
+import {
+  calcAvailableLeaveDays,
+  computeAnnualLeaveQuota,
+} from "@/lib/leave/overtime-rules";
 import { handleApiError, resolveAuthContext } from "@/lib/security/auth-session";
 import { assertAuthorized, assertNotSelfApproval } from "@/lib/security/rbac";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -58,24 +61,43 @@ export async function GET() {
 
     let balQuery = admin
       .from("leave_balances")
-      .select("*, leave_types(code, name), employees(employee_code, full_name)")
+      .select("*, leave_types(code, name), employees(employee_code, full_name, hire_date)")
       .eq("year", currentYear);
     let reqQuery = admin
       .from("leave_requests")
       .select("*, leave_types(code, name, deducts_annual_quota), employees(employee_code, full_name)")
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(100);
+
+    let empQuery = admin
+      .from("employees")
+      .select("id, employee_code, full_name, hire_date, org_assignments(department_id, is_primary)")
+      .order("employee_code");
 
     if (!isManagerOrHr && ctx.employeeId) {
       balQuery = balQuery.eq("employee_id", ctx.employeeId);
       reqQuery = reqQuery.eq("employee_id", ctx.employeeId);
+      empQuery = empQuery.eq("id", ctx.employeeId);
     }
 
-    const [{ data: balances }, { data: requests, error: reqErr }] = await Promise.all([
+    const [
+      { data: balances },
+      { data: requests, error: reqErr },
+      { data: emps },
+      { data: depts },
+    ] = await Promise.all([
       balQuery,
       reqQuery,
+      empQuery,
+      admin.from("departments").select("id, name"),
     ]);
     if (reqErr) throw reqErr;
+
+    const deptMap = new Map<string, string>();
+    (depts ?? []).forEach((d) => deptMap.set(d.id, d.name));
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const in14DaysStr = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
 
     const computedBalances = (balances ?? []).map((b) => {
       const calc = calcAvailableLeaveDays({
@@ -93,11 +115,96 @@ export async function GET() {
       };
     });
 
+    // Map leave requests per employee
+    const allRequests = requests ?? [];
+    const empRequestsMap = new Map<string, typeof allRequests>();
+    allRequests.forEach((r) => {
+      const list = empRequestsMap.get(r.employee_id) ?? [];
+      list.push(r);
+      empRequestsMap.set(r.employee_id, list);
+    });
+
+    // Compute Seniority Funds for employees
+    const seniorityFunds = (emps ?? []).map((emp) => {
+      const empBals = (balances ?? []).filter((b) => b.employee_id === emp.id);
+      const annualBal = empBals.find(
+        (b) => (b.leave_types as { code?: string } | null)?.code === "ANNUAL"
+      );
+      const baseDays = annualBal ? Number(annualBal.entitled_days) : 12;
+
+      const quota = computeAnnualLeaveQuota({
+        baseDays,
+        hireDate: emp.hire_date || "2024-01-01",
+        year: currentYear,
+      });
+
+      const empReqs = empRequestsMap.get(emp.id) ?? [];
+      const usedDays = empReqs
+        .filter((r) => r.status === "APPROVED" && r.start_date <= todayStr)
+        .reduce((sum, r) => sum + Number(r.total_days), 0);
+      const upcomingApprovedDays = empReqs
+        .filter((r) => r.status === "APPROVED" && r.start_date > todayStr)
+        .reduce((sum, r) => sum + Number(r.total_days), 0);
+      const pendingDays = empReqs
+        .filter((r) => r.status === "PENDING")
+        .reduce((sum, r) => sum + Number(r.total_days), 0);
+
+      const remainingDays = Math.max(
+        0,
+        quota.totalEntitledDays - usedDays - upcomingApprovedDays
+      );
+
+      const primAss = (
+        emp.org_assignments as Array<{ department_id: string; is_primary: boolean }> | null
+      )?.find((a) => a.is_primary) ?? (
+        emp.org_assignments as Array<{ department_id: string }> | null
+      )?.[0];
+      const departmentName = (primAss && deptMap.get(primAss.department_id)) || "Khối Vận hành";
+
+      return {
+        employeeId: emp.id,
+        employeeCode: emp.employee_code,
+        fullName: emp.full_name,
+        departmentName,
+        hireDate: emp.hire_date,
+        seniorityDisplay: quota.seniorityDisplay,
+        seniorityYears: quota.seniorityYears,
+        baseDays,
+        seniorityBonus: quota.bonusDays,
+        totalAnnualLeave: quota.totalEntitledDays,
+        isProrated: quota.isProrated,
+        workedMonthsInYear: quota.workedMonthsInYear,
+        usedDays,
+        upcomingApprovedDays,
+        pendingDays,
+        remainingDays,
+      };
+    });
+
+    // Compute top metrics stats
+    const pendingReqs = allRequests.filter((r) => r.status === "PENDING");
+    const pendingCount = pendingReqs.length;
+    const duePendingCount = pendingReqs.filter((r) => r.start_date <= todayStr).length;
+    const upcoming14dCount = allRequests.filter(
+      (r) => r.status === "APPROVED" && r.start_date > todayStr && r.start_date <= in14DaysStr
+    ).length;
+    const approvedCount = allRequests.filter((r) => r.status === "APPROVED").length;
+    const rejectedCount = allRequests.filter((r) => r.status === "REJECTED").length;
+
     return NextResponse.json({
       data: {
         leaveTypes: leaveTypes ?? [],
         balances: computedBalances,
-        requests: requests ?? [],
+        requests: allRequests,
+        seniorityFunds,
+        stats: {
+          pendingCount,
+          duePendingCount,
+          upcoming14dCount,
+          approvedCount,
+          rejectedCount,
+        },
+        asOfDate: todayStr,
       },
     });
   } catch (err) {
@@ -208,7 +315,41 @@ export async function PATCH(req: Request) {
     const ctx = await resolveAuthContext();
     assertAuthorized(ctx, "LEAVE", "APPROVE");
 
-    const body = decisionSchema.parse(await req.json());
+    const raw = await req.json();
+
+    if (raw.actionType === "UPDATE_BASE_DAYS" || (raw.employeeId && raw.baseDays !== undefined)) {
+      const currentYear = new Date().getUTCFullYear();
+      const admin = getSupabaseAdminClient();
+      const { data: annualType } = await admin
+        .from("leave_types")
+        .select("id")
+        .eq("code", "ANNUAL")
+        .single();
+      const { data: comp } = await admin.from("companies").select("id").limit(1).single();
+      if (!annualType || !comp) {
+        return NextResponse.json({ error: { message: "Không tìm thấy cấu hình phép năm" } }, { status: 400 });
+      }
+
+      const { data: updatedBal, error: bErr } = await admin
+        .from("leave_balances")
+        .upsert(
+          {
+            company_id: comp.id,
+            employee_id: raw.employeeId,
+            leave_type_id: annualType.id,
+            year: currentYear,
+            entitled_days: Number(raw.baseDays),
+          },
+          { onConflict: "employee_id,leave_type_id,year" }
+        )
+        .select("*")
+        .single();
+      if (bErr) throw bErr;
+
+      return NextResponse.json({ data: updatedBal });
+    }
+
+    const body = decisionSchema.parse(raw);
     const admin = getSupabaseAdminClient();
 
     const { data: leaveReq, error: rErr } = await admin

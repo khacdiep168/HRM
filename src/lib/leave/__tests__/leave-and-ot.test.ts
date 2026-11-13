@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   calcAvailableLeaveDays,
+  computeAnnualLeaveQuota,
+  computeSeniority,
   getOvertimeMultipliers,
   validateOvertimeCaps,
 } from "../overtime-rules";
@@ -90,6 +92,48 @@ describe("Leave Balance & Overtime Statutory Rules (BLLĐ 2019)", () => {
     });
     expect(april.effectiveCarryover).toBe(0);
     expect(april.availableDays).toBe(11);
+  });
+
+  it("calculates seniority and leave bonus per Vietnam Labor Code Điều 113, 114 & NĐ 145/2020", () => {
+    // 7 years seniority: 1 bonus day (+1 per 5 years)
+    const asOf = new Date("2026-11-08T00:00:00Z");
+    const sen7 = computeSeniority("2019-11-08", asOf);
+    expect(sen7.years).toBe(7);
+    expect(sen7.bonusDays).toBe(1);
+    expect(sen7.display).toBe("7 năm");
+
+    // 4 years seniority: 0 bonus days
+    const sen4 = computeSeniority("2022-11-08", asOf);
+    expect(sen4.years).toBe(4);
+    expect(sen4.bonusDays).toBe(0);
+    expect(sen4.display).toBe("4 năm");
+
+    // 10 years seniority: 2 bonus days
+    const sen10 = computeSeniority("2016-11-08", asOf);
+    expect(sen10.years).toBe(10);
+    expect(sen10.bonusDays).toBe(2);
+
+    // Full year entitlement: base 12 + 1 bonus = 13 days
+    const quota7 = computeAnnualLeaveQuota({
+      baseDays: 12,
+      hireDate: "2019-11-08",
+      year: 2026,
+      asOfDate: asOf,
+    });
+    expect(quota7.totalEntitledDays).toBe(13);
+    expect(quota7.bonusDays).toBe(1);
+    expect(quota7.isProrated).toBe(false);
+
+    // Prorated entitlement for employee hired during the current year (March 2026 -> 10 months worked)
+    const quotaNew = computeAnnualLeaveQuota({
+      baseDays: 12,
+      hireDate: "2026-03-01",
+      year: 2026,
+      asOfDate: asOf,
+    });
+    expect(quotaNew.isProrated).toBe(true);
+    expect(quotaNew.workedMonthsInYear).toBe(10);
+    expect(quotaNew.totalEntitledDays).toBe(10);
   });
 });
 
