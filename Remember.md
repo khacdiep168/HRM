@@ -20,3 +20,13 @@
   - Region III minimum wage (`4,140,000` in 2026; `4,450,000` from 01/01/2027).
   - Union dues 1% of BHXH salary (capped at 10% reference level = `253,000 đ` per QĐ 1408/QĐ-TLĐ 2024) + ER union fee 2%.
 
+## Transformation Initiative: Practical HRM Enterprise for Thế Kỷ Vàng (Steps 0 – 6)
+- **Bước 0 (Audit & Roadmap):** `COMPLETED` (`docs/AUDIT.md` comprehensive repo scan).
+- **Bước 1 (Navigation & Feature Flags):** `COMPLETED` (5 activity-based menu groups, 5 inactive modules hidden behind flags, auth middleware guard).
+- **Bước 2 (Core Flows & Approvals):** `COMPLETED` (Mobile ESS, unified `/approvals` with schema fix for `overtime_requests`, 5-step payroll with secure unlock, transparent payslips).
+- **Bước 3 (Legal Compliance & Decimal Engine):** `COMPLETED` (`docs/LEGAL_PARAMS.md`, VN-2026-H2 rules, `decimal-engine.ts`, 15 statutory tests).
+- **Bước 4 (UX, StateViews & i18n):** `COMPLETED` (Skeleton/Empty/Error states, standard Vietnamese formatting, 390px mobile responsiveness).
+- **Bước 5 (Data Privacy & Security Scoping):** `COMPLETED` (Server-side RBAC scoping, PII protection, audit trail, rate limit, anti-buddy punch).
+- **Bước 6 (Simulation & Verification):** `COMPLETED` (`scripts/seed-enterprise-50.mjs` with 50 staff & 3 months data, 56/56 automated tests passing, `docs/USER_GUIDE.md`, `docs/CHANGELOG.md`).
+
+

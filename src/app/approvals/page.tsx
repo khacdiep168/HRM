@@ -60,13 +60,17 @@ export default function ApprovalsPage() {
         const ots: ApprovalItem[] = (json.data?.overtimes ?? []).map(
           (o: Record<string, unknown>) => {
             const emp = o.employees as { employee_code?: string; full_name?: string } | null;
+            const hours =
+              (o.requested_hours as number | string | undefined) ??
+              (o.planned_hours as number | string | undefined) ??
+              0;
             return {
               key: `OT:${o.id}`,
               type: "OT",
               id: String(o.id),
               empCode: emp?.employee_code ?? "",
               empName: emp?.full_name ?? "Nhân viên",
-              summary: `Tăng ca (${translateEnumVi(String(o.ot_day_type ?? "WEEKDAY"))}) • ${o.planned_hours} giờ`,
+              summary: `Tăng ca (${translateEnumVi(String(o.ot_day_type ?? "WEEKDAY"))}) • ${hours} giờ`,
               dateLabel: formatDateVi(String(o.work_date)),
               reason: String(o.reason ?? ""),
             };

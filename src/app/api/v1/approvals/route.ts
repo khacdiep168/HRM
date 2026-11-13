@@ -35,7 +35,7 @@ export async function GET() {
       admin
         .from("overtime_requests")
         .select(
-          "id, employee_id, work_date, planned_hours, ot_day_type, reason, status, created_at, employees(employee_code, full_name)"
+          "id, employee_id, work_date, requested_hours, ot_day_type, reason, status, created_at, employees(employee_code, full_name)"
         )
         .eq("status", "PENDING")
         .order("created_at", { ascending: false }),
@@ -74,7 +74,6 @@ export async function POST(req: Request) {
     const excIds = body.items.filter((i) => i.type === "EXCEPTION").map((i) => i.id);
 
     const nextStatus = body.action === "APPROVE" ? "APPROVED" : "REJECTED";
-    const excStatus = body.action === "APPROVE" ? "MANAGER_APPROVED" : "REJECTED";
 
     await Promise.all([
       leaveIds.length > 0
@@ -82,8 +81,9 @@ export async function POST(req: Request) {
             .from("leave_requests")
             .update({
               status: nextStatus,
-              approved_by: ctx.userId,
-              approved_at: nowIso,
+              reviewed_by: ctx.userId,
+              reviewed_at: nowIso,
+              ...(body.reason ? { review_note: body.reason } : {}),
             })
             .in("id", leaveIds)
             .eq("status", "PENDING")
@@ -93,8 +93,9 @@ export async function POST(req: Request) {
             .from("overtime_requests")
             .update({
               status: nextStatus,
-              approved_by: ctx.userId,
-              approved_at: nowIso,
+              reviewed_by: ctx.userId,
+              reviewed_at: nowIso,
+              ...(body.reason ? { review_note: body.reason } : {}),
             })
             .in("id", otIds)
             .eq("status", "PENDING")
@@ -103,10 +104,9 @@ export async function POST(req: Request) {
         ? admin
             .from("attendance_exceptions")
             .update({
-              status: excStatus,
+              status: nextStatus,
               reviewed_by: ctx.userId,
               reviewed_at: nowIso,
-              ...(body.reason ? { review_note: body.reason } : {}),
             })
             .in("id", excIds)
             .eq("status", "PENDING")
