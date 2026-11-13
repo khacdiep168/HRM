@@ -161,6 +161,7 @@ export default function ContractsPage() {
   const [todayTime, setTodayTime] = useState<number | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTodayTime(new Date().setHours(0, 0, 0, 0));
   }, []);
 

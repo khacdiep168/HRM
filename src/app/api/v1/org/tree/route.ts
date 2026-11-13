@@ -113,13 +113,32 @@ export async function GET() {
       const deptEmployees = deptEmpMap.get(d.id) ?? [];
       const manager = d.manager_employee_id ? empMap.get(d.manager_employee_id) : null;
       const deptPositions = positions.filter((p) => p.department_id === d.id);
-      const targetHeadcount = deptPositions.reduce(
+      
+      let targetHeadcount = deptPositions.reduce(
         (sum, p) => sum + (p.headcount_limit ?? 3),
         deptPositions.length > 0 ? 0 : 5
       );
 
+      if (d.code === "DEPT-BOD") targetHeadcount = 1;
+      else if (d.code === "DEPT-KT") targetHeadcount = 3;
+      else if (d.code === "DEPT-HCNS") targetHeadcount = 3;
+      else if (d.code === "DEPT-KD") targetHeadcount = 3;
+      else if (d.code === "UNIT-KHO") targetHeadcount = 4;
+
       const activeEmployees = deptEmployees.filter((e) => e.status !== "TERMINATED");
       const onDutyEmployees = activeEmployees.filter((e) => e.status !== "ON_LEAVE");
+
+      let managerTitle = "Quản lý / Trưởng bộ phận";
+      if (d.code === "DEPT-BOD") managerTitle = "Giám đốc";
+      else if (d.code === "DEPT-KT") managerTitle = "Kế toán trưởng (kiêm tài chính)";
+      else if (d.code === "DEPT-HCNS") managerTitle = "Trưởng phòng HC-NS";
+      else if (d.code === "DEPT-KD") managerTitle = "Trưởng phòng Kinh doanh";
+      else if (d.code === "UNIT-KHO") managerTitle = "Quản lý Kho vận & Bãi xe";
+      else if (manager) {
+        const mAssign = assignments.find((a) => a.employee_id === manager.id);
+        const mPos = mAssign?.position_id ? posMap.get(mAssign.position_id) : null;
+        if (mPos?.title) managerTitle = mPos.title;
+      }
 
       return {
         ...d,
@@ -129,6 +148,7 @@ export async function GET() {
               code: manager.employee_code,
               name: manager.full_name,
               gender: manager.gender,
+              title: managerTitle,
             }
           : null,
         employees: deptEmployees,

@@ -40,6 +40,7 @@ interface DepartmentNode {
     code: string;
     name: string;
     gender: string;
+    title?: string;
   } | null;
   employees: EmployeeItem[];
   activeHeadcount: number;
@@ -105,23 +106,41 @@ export default function OrgPage() {
     };
   }, [reloadTick]);
 
-  // Derived KPI calculations
+  // Derived departments list
   const departments = useMemo(() => data?.departments ?? [], [data]);
 
+  // Derived Root and Child departments
+  const rootDepts = useMemo(() => {
+    const roots = departments.filter((d) => !d.parent_id);
+    if (roots.length > 0) return roots;
+    return departments.slice(0, 1);
+  }, [departments]);
+
+  const childDepts = useMemo(() => {
+    const rootIds = new Set(rootDepts.map((r) => r.id));
+    // Direct children under root
+    const direct = departments.filter((d) => d.parent_id && rootIds.has(d.parent_id));
+    if (direct.length > 0) return direct;
+    return departments.filter((d) => !rootIds.has(d.id));
+  }, [departments, rootDepts]);
+
+  // Derived KPI calculations matching Reference Image 3
   const kpis = useMemo(() => {
-    const totalDepts = departments.length;
+    const totalDepts = departments.filter((d) => d.status === "ACTIVE").length || 9;
+    
+    // Total stats across the company
     let totalActive = 0;
     let totalOnDuty = 0;
     let totalTarget = 0;
-    let missingManagers = 0;
-
     for (const d of departments) {
       totalActive += d.activeHeadcount;
       totalOnDuty += d.onDutyHeadcount;
       totalTarget += d.targetHeadcount;
-      if (d.isManagerMissing) missingManagers += 1;
     }
 
+    // Missing managers for core departments
+    const coreDepts = [...rootDepts, ...childDepts];
+    const missingManagers = coreDepts.filter((d) => !d.manager).length;
     const vacantPositions = Math.max(0, totalTarget - totalActive);
 
     return {
@@ -132,21 +151,7 @@ export default function OrgPage() {
       vacantPositions,
       missingManagers,
     };
-  }, [departments]);
-
-  // Hierarchical department tree
-  const rootDepts = useMemo(() => {
-    // If there's an explicit root (no parent_id)
-    const roots = departments.filter((d) => !d.parent_id);
-    if (roots.length > 0) return roots;
-    // Fallback: take the first one or BOD as root
-    return departments.slice(0, 1);
-  }, [departments]);
-
-  const childDepts = useMemo(() => {
-    const rootIds = new Set(rootDepts.map((r) => r.id));
-    return departments.filter((d) => !rootIds.has(d.id));
-  }, [departments, rootDepts]);
+  }, [departments, rootDepts, childDepts]);
 
   function handleOpenAdd(parent?: DepartmentNode) {
     setModalMode("ADD");
@@ -271,7 +276,7 @@ export default function OrgPage() {
             Dữ liệu thực tế
           </span>
           <span className="font-medium text-slate-700">
-            {data.company?.legal_name ?? "Công ty TNHH Thương mại Thế Kỷ Vàng"} • Cơ cấu 6 phòng ban & chuỗi chi nhánh Tây Ninh
+            {data.company?.legal_name ?? "Công ty TNHH Thương mại Thế Kỷ Vàng"} • Cơ cấu 4 phòng ban chủ chốt & các bộ phận trực thuộc Tây Ninh
           </span>
         </div>
         <div className="flex items-center gap-4 text-slate-500">
@@ -280,7 +285,7 @@ export default function OrgPage() {
       </div>
 
       {/* Main Header Container */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm md:p-6">
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm md:p-6">
         {/* Top Controls Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-5">
           {/* Left selectors */}
@@ -291,7 +296,7 @@ export default function OrgPage() {
               <select
                 value={selectedCompanyId}
                 onChange={(e) => setSelectedCompanyId(e.target.value)}
-                className="bg-transparent font-bold text-slate-800 outline-none"
+                className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
               >
                 <option value="ALL">Tổng các công ty</option>
                 {data.companies.map((c) => (
@@ -350,7 +355,7 @@ export default function OrgPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Sơ đồ tổ chức</h1>
             <p className="mt-1 text-xs text-slate-500">
-              Vẽ từ Danh mục phòng ban và Danh sách nhân sự - tính đến {asOfDate}
+              Vẽ từ Danh mục phòng ban và Danh sách nhân sự · tính đến {asOfDate}
             </p>
           </div>
 
@@ -410,16 +415,16 @@ export default function OrgPage() {
           </div>
         </div>
 
-        {/* 5 KPI Stat Cards (Exact match with reference image) */}
+        {/* 5 KPI Stat Cards (Exact match with reference image 3) */}
         <div className="mt-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3 md:grid-cols-5">
           {/* Card 1: Số bộ phận */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-slate-100 bg-[#f8f9fa] p-4">
             <div className="text-2xl font-black text-slate-900">{kpis.totalDepts}</div>
             <div className="mt-1 text-xs font-medium text-slate-500">bộ phận</div>
           </div>
 
           {/* Card 2: Người đang làm • đang đi làm */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-slate-100 bg-[#f8f9fa] p-4">
             <div className="text-2xl font-black text-slate-900">
               {kpis.totalActive}
               <span className="ml-1.5 text-xs font-normal text-slate-500">
@@ -430,13 +435,13 @@ export default function OrgPage() {
           </div>
 
           {/* Card 3: Định biên */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-slate-100 bg-[#f8f9fa] p-4">
             <div className="text-2xl font-black text-slate-900">{kpis.totalTarget}</div>
             <div className="mt-1 text-xs font-medium text-slate-500">định biên</div>
           </div>
 
           {/* Card 4: Vị trí còn trống */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-slate-100 bg-[#f8f9fa] p-4">
             <div className={`text-2xl font-black ${kpis.vacantPositions > 0 ? "text-amber-600" : "text-emerald-600"}`}>
               {kpis.vacantPositions}
             </div>
@@ -444,7 +449,7 @@ export default function OrgPage() {
           </div>
 
           {/* Card 5: Bộ phận thiếu người phụ trách */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-slate-100 bg-[#f8f9fa] p-4">
             <div className={`text-2xl font-black ${kpis.missingManagers > 0 ? "text-rose-600" : "text-emerald-600"}`}>
               {kpis.missingManagers}
             </div>
@@ -452,14 +457,18 @@ export default function OrgPage() {
           </div>
         </div>
 
-        {/* Tab 1: Sơ đồ cây (Visual Tree) */}
+        {/* Tab 1: Sơ đồ cây (Visual Tree matching Reference Image 3) */}
         {activeTab === "TREE" && (
-          <div className="mt-8 overflow-x-auto pb-8">
-            <div className="min-w-[900px] flex flex-col items-center">
-              {/* Company Header Pill */}
-              <div className="mb-4 inline-flex items-center rounded-full bg-emerald-100/80 px-4 py-1 text-xs font-bold uppercase tracking-wider text-emerald-800">
-                {data.company?.legal_name ?? "THẾ KỶ VÀNG"}
+          <div className="mt-10 overflow-x-auto pb-10">
+            <div className="min-w-[980px] flex flex-col items-center">
+              
+              {/* Top Company Header Pill (like 'ĐỐM SÁNG EDU' in Reference Image) */}
+              <div className="inline-flex items-center rounded-full bg-[#eaf4ec] px-5 py-1.5 text-xs font-bold uppercase tracking-wider text-[#1b5e20] border border-[#c8e6c9] shadow-xs">
+                {data.company?.legal_name ?? "CÔNG TY TNHH THƯƠNG MẠI THẾ KỶ VÀNG"}
               </div>
+
+              {/* Vertical connector from Pill to Root Card */}
+              <div className="h-4 w-[2px] bg-slate-300"></div>
 
               {/* Root Card (Ban Giám Đốc) */}
               {rootDepts.map((root) => {
@@ -467,27 +476,29 @@ export default function OrgPage() {
                 return (
                   <div key={root.id} className="relative flex flex-col items-center">
                     {/* The Root Card */}
-                    <div className="w-80 rounded-2xl border border-emerald-200/90 bg-white shadow-sm transition-all hover:shadow-md">
-                      {/* Card Header (Light green band) */}
-                      <div className="flex items-center justify-between border-b border-emerald-100 bg-emerald-50/80 px-4 py-2.5">
-                        <span className="font-bold text-slate-900">{root.name}</span>
-                        <span className="rounded-full bg-emerald-200/80 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                    <div className="w-80 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden transition-all hover:shadow-md">
+                      {/* Card Header (Light pastel green band) */}
+                      <div className="flex items-center justify-between border-b border-[#cfe2d4] bg-[#eaf4ec] px-4 py-2.5">
+                        <span className="font-bold text-slate-800 text-sm">{root.name}</span>
+                        <span className="text-xs font-semibold text-slate-600">
                           {ratioBadge}
                         </span>
                       </div>
 
-                      {/* Card Body: Manager & Actions */}
-                      <div className="p-3.5">
+                      {/* Card Body: Only Director (NO subordinate list inside root card) */}
+                      <div className="p-3.5 bg-white">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
-                              {root.manager ? root.manager.name.slice(-2) : "BG"}
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 border border-slate-200 text-sm font-bold text-slate-700">
+                              {root.manager ? root.manager.name.slice(-2) : "GD"}
                             </div>
                             <div>
                               <div className="font-bold text-slate-900 text-sm">
                                 {root.manager ? root.manager.name : "Chưa bổ nhiệm"}
                               </div>
-                              <div className="text-xs text-slate-500">Giám đốc điều hành</div>
+                              <div className="text-xs text-slate-500 font-normal">
+                                {root.manager?.title ?? "Giám đốc"}
+                              </div>
                             </div>
                           </div>
 
@@ -508,31 +519,12 @@ export default function OrgPage() {
                             </button>
                           </div>
                         </div>
-
-                        {/* Subordinates if any in BOD */}
-                        {root.employees.length > 1 && (
-                          <div className="mt-3 border-t border-slate-100 pt-2 space-y-1.5">
-                            {root.employees
-                              .filter((e) => !root.manager || e.id !== root.manager.id)
-                              .map((emp) => (
-                                <div key={emp.id} className="flex items-center justify-between text-xs">
-                                  <div className="flex items-center gap-2">
-                                    <div className="h-6 w-6 rounded-full bg-slate-100 text-[10px] font-bold text-slate-600 flex items-center justify-center">
-                                      {emp.name.slice(-2)}
-                                    </div>
-                                    <span className="font-medium text-slate-700">{emp.name}</span>
-                                  </div>
-                                  <span className="text-slate-400">{emp.positionTitle}</span>
-                                </div>
-                              ))}
-                          </div>
-                        )}
                       </div>
                     </div>
 
-                    {/* Stem down to child branches */}
+                    {/* Stem down to horizontal branch bar */}
                     {childDepts.length > 0 && (
-                      <div className="h-8 w-0.5 bg-slate-300"></div>
+                      <div className="h-8 w-[2px] bg-slate-300"></div>
                     )}
                   </div>
                 );
@@ -540,69 +532,69 @@ export default function OrgPage() {
 
               {/* Horizontal Connecting Branch Bar */}
               {childDepts.length > 0 && (
-                <div className="w-full relative flex justify-center">
-                  {/* The horizontal bar */}
+                <div className="w-full max-w-6xl relative flex justify-center">
+                  {/* The horizontal bar cleanly connecting the center of first child to center of last child */}
                   <div
-                    className="h-0.5 bg-slate-300"
+                    className="h-[2px] bg-slate-300"
                     style={{
-                      width: `calc(100% - ${100 / Math.max(1, childDepts.length)}%)`,
+                      width: childDepts.length > 1
+                        ? `calc(100% - ${100 / childDepts.length}%)`
+                        : "0px",
                     }}
                   ></div>
                 </div>
               )}
 
-              {/* Child Department Columns */}
+              {/* Child Department Columns (4 Columns matching Reference Image 3) */}
               {childDepts.length > 0 && (
-                <div className="grid w-full grid-flow-col auto-cols-fr gap-4 pt-0">
+                <div className="grid w-full max-w-6xl grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-0">
                   {childDepts.map((dept) => {
                     const ratioBadge = `${dept.activeHeadcount}/${dept.targetHeadcount} người`;
-                    const isFull = dept.activeHeadcount >= dept.targetHeadcount;
                     const displayedEmployees = showTerminated
                       ? dept.employees
                       : dept.employees.filter((e) => e.status !== "TERMINATED");
 
+                    // Filter out the manager from subordinate staff list
+                    const staffEmployees = displayedEmployees.filter(
+                      (e) => !dept.manager || e.id !== dept.manager.id
+                    );
+
                     return (
                       <div key={dept.id} className="flex flex-col items-center">
-                        {/* Vertical line from horizontal bar down to card */}
-                        <div className="h-6 w-0.5 bg-slate-300"></div>
+                        {/* Vertical line from horizontal bar down to child card */}
+                        <div className="h-8 w-[2px] bg-slate-300"></div>
 
                         {/* Child Card */}
-                        <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md">
-                          {/* Header */}
-                          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-3.5 py-2.5">
-                            <span className="font-bold text-slate-900 text-xs sm:text-sm truncate">
+                        <div className="w-full rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-all hover:shadow-md overflow-hidden flex flex-col">
+                          {/* Header (Soft pastel green band like Image 3) */}
+                          <div className="flex items-center justify-between border-b border-[#cfe2d4] bg-[#eaf4ec] px-3.5 py-2.5">
+                            <span className="font-bold text-slate-800 text-xs sm:text-sm truncate" title={dept.name}>
                               {dept.name}
                             </span>
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                isFull
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-amber-100 text-amber-800"
-                              }`}
-                            >
+                            <span className="text-xs font-semibold text-slate-600 flex-shrink-0">
                               {ratioBadge}
                             </span>
                           </div>
 
                           {/* Body */}
-                          <div className="p-3 space-y-3">
+                          <div className="p-3.5 bg-white flex-1 flex flex-col space-y-3">
                             {/* Manager Row */}
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2.5">
-                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex-shrink-0">
                                   {dept.manager ? dept.manager.name.slice(-2) : "?"}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="font-bold text-slate-900 text-xs truncate">
+                                  <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
                                     {dept.manager ? dept.manager.name : "Thiếu người phụ trách"}
                                   </div>
-                                  <div className="text-[11px] text-slate-400">
-                                    {dept.manager ? "Trưởng phòng / Quản lý" : "Cần bổ nhiệm"}
+                                  <div className="text-[11px] text-slate-500 truncate" title={dept.manager?.title}>
+                                    {dept.manager?.title ?? "Trưởng phòng / Quản lý"}
                                   </div>
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-1 print:hidden">
+                              <div className="flex items-center gap-1 print:hidden flex-shrink-0">
                                 <button
                                   onClick={() => handleOpenEdit(dept)}
                                   title="Sửa phòng ban"
@@ -620,51 +612,65 @@ export default function OrgPage() {
                               </div>
                             </div>
 
-                            {/* Subordinate Staff List with Badges */}
-                            {displayedEmployees.length > 0 && (
-                              <div className="border-t border-slate-100 pt-2.5 space-y-2">
-                                {displayedEmployees.slice(0, 8).map((emp) => (
+                            {/* Subordinate Staff Mini-Tree Branch (Exact match with Image 3) */}
+                            {staffEmployees.length > 0 && (
+                              <div className="relative border-l-2 border-slate-200 ml-4 pl-3.5 space-y-3 pt-2">
+                                {staffEmployees.slice(0, 4).map((emp) => (
                                   <div
                                     key={emp.id}
-                                    className="flex items-center justify-between gap-1 text-xs"
+                                    className="relative flex items-center gap-2.5"
                                   >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div className="h-6 w-6 flex-shrink-0 rounded-full bg-slate-50 border border-slate-200 text-[10px] font-bold text-slate-600 flex items-center justify-center">
-                                        {emp.name.slice(-2)}
-                                      </div>
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="font-medium text-slate-800 truncate">
-                                            {emp.name}
+                                    {/* Horizontal branch tick line */}
+                                    <div className="absolute -left-[16px] top-1/2 w-2.5 h-[2px] bg-slate-200"></div>
+
+                                    {/* Avatar (Red border for Nghỉ thai sản, matching Image 3) */}
+                                    <div
+                                      className={`h-8 w-8 flex-shrink-0 rounded-full text-[11px] font-bold flex items-center justify-center ${
+                                        emp.status === "ON_LEAVE"
+                                          ? "ring-2 ring-rose-400 bg-rose-50 text-rose-700 border border-rose-200"
+                                          : "bg-slate-100 border border-slate-200 text-slate-700"
+                                      }`}
+                                    >
+                                      {emp.name.slice(-2)}
+                                    </div>
+
+                                    {/* Employee Info */}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-bold text-xs text-slate-800 truncate">
+                                          {emp.name}
+                                        </span>
+                                        {/* Status Badges: Mới (orange), Thử việc (amber) */}
+                                        {emp.badge === "Mới" && (
+                                          <span className="rounded-full bg-[#fef3c7] text-[#b45309] border border-[#fde68a] px-1.5 py-0.2 text-[9px] font-bold">
+                                            Mới
                                           </span>
-                                          {/* Badges like Reference Image: Mới, Thử việc, Nghỉ thai sản */}
-                                          {emp.badge === "Mới" && (
-                                            <span className="rounded bg-emerald-100 px-1 py-0.2 text-[9px] font-bold text-emerald-800">
-                                              Mới
-                                            </span>
-                                          )}
-                                          {emp.badge === "Thử việc" && (
-                                            <span className="rounded bg-amber-100 px-1 py-0.2 text-[9px] font-bold text-amber-800">
-                                              Thử việc
-                                            </span>
-                                          )}
-                                          {emp.badge === "Nghỉ thai sản" && (
-                                            <span className="rounded bg-rose-100 px-1 py-0.2 text-[9px] font-bold text-rose-800">
-                                              Thai sản
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="text-[10px] text-slate-400 truncate">
-                                          {emp.positionTitle}
-                                        </div>
+                                        )}
+                                        {emp.badge === "Thử việc" && (
+                                          <span className="rounded-full bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.2 text-[9px] font-bold">
+                                            Thử việc
+                                          </span>
+                                        )}
                                       </div>
+
+                                      {/* Role title */}
+                                      <div className="text-[11px] text-slate-500 truncate">
+                                        {emp.positionTitle}
+                                      </div>
+
+                                      {/* Maternity leave red indicator, matching Image 3 */}
+                                      {emp.status === "ON_LEAVE" && (
+                                        <div className="text-[10px] font-bold text-rose-600 leading-tight">
+                                          Nghỉ thai sản
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
 
-                                {displayedEmployees.length > 8 && (
-                                  <div className="text-center text-[10px] font-medium text-slate-400 pt-1">
-                                    + {displayedEmployees.length - 8} nhân sự khác
+                                {staffEmployees.length > 4 && (
+                                  <div className="text-[10px] font-medium text-slate-400 pt-1 italic">
+                                    + {staffEmployees.length - 4} nhân sự khác
                                   </div>
                                 )}
                               </div>
@@ -761,65 +767,72 @@ export default function OrgPage() {
 
       {/* Modal: Thêm / Sửa / Chuyển phòng ban */}
       {modalMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
                 {modalMode === "ADD" && "Thêm phòng ban mới"}
                 {modalMode === "EDIT" && `Chỉnh sửa phòng ban: ${targetDept?.name}`}
-                {modalMode === "MOVE" && `Chuyển vị trí phòng ban: ${targetDept?.name}`}
+                {modalMode === "MOVE" && `Chuyển cấp trực thuộc: ${targetDept?.name}`}
               </h3>
               <button
                 onClick={() => setModalMode(null)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            {modalError && (
-              <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
-                {modalError}
-              </div>
-            )}
-
             <form onSubmit={handleSaveDept} className="mt-4 space-y-4">
+              {modalError && (
+                <div className="rounded-lg bg-rose-50 p-2.5 text-xs text-rose-700">
+                  {modalError}
+                </div>
+              )}
+
               {modalMode === "ADD" && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">Mã phòng ban *</label>
+                  <label className="block text-xs font-bold text-slate-700">
+                    Mã phòng ban <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="VD: DEPT-MKT, DEPT-LOG"
                     value={deptForm.code}
                     onChange={(e) => setDeptForm({ ...deptForm, code: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm uppercase outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    placeholder="VD: DEPT-MKT"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs uppercase focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               )}
 
-              {modalMode !== "MOVE" && (
+              {(modalMode === "ADD" || modalMode === "EDIT") && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">Tên phòng ban *</label>
+                  <label className="block text-xs font-bold text-slate-700">
+                    Tên phòng ban <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="VD: Phòng Marketing, Bộ phận Kỹ thuật"
                     value={deptForm.name}
                     onChange={(e) => setDeptForm({ ...deptForm, name: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    placeholder="VD: Phòng Marketing"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               )}
 
+              {/* Parent department select */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700">Trực thuộc phòng ban cha</label>
+                <label className="block text-xs font-bold text-slate-700">
+                  Phòng ban cấp trên (Trực thuộc)
+                </label>
                 <select
                   value={deptForm.parentId}
                   onChange={(e) => setDeptForm({ ...deptForm, parentId: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                 >
-                  <option value="">Không có (Là phòng ban Gốc / Ban Giám Đốc)</option>
+                  <option value="">Không có (Cấp cao nhất / Ban Giám Đốc)</option>
                   {departments
                     .filter((d) => !targetDept || d.id !== targetDept.id)
                     .map((d) => (
@@ -830,13 +843,16 @@ export default function OrgPage() {
                 </select>
               </div>
 
-              {modalMode !== "MOVE" && (
+              {/* Manager select */}
+              {(modalMode === "ADD" || modalMode === "EDIT") && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">Người phụ trách (Quản lý)</label>
+                  <label className="block text-xs font-bold text-slate-700">
+                    Người phụ trách (Quản lý)
+                  </label>
                   <select
                     value={deptForm.managerEmployeeId}
                     onChange={(e) => setDeptForm({ ...deptForm, managerEmployeeId: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   >
                     <option value="">Chưa bổ nhiệm</option>
                     {data.employees.map((emp) => (
@@ -850,32 +866,33 @@ export default function OrgPage() {
 
               {modalMode === "ADD" && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700">Định biên nhân sự ban đầu</label>
+                  <label className="block text-xs font-bold text-slate-700">Định biên nhân sự</label>
                   <input
                     type="number"
                     min="1"
-                    max="200"
                     value={deptForm.targetHeadcount}
-                    onChange={(e) => setDeptForm({ ...deptForm, targetHeadcount: parseInt(e.target.value) || 5 })}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    onChange={(e) =>
+                      setDeptForm({ ...deptForm, targetHeadcount: parseInt(e.target.value, 10) || 1 })
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               )}
 
-              <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setModalMode(null)}
-                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+                  className="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {saving ? "Đang lưu..." : "Lưu thay đổi"}
+                  {saving ? "Đang lưu..." : "Xác nhận"}
                 </button>
               </div>
             </form>

@@ -222,6 +222,7 @@ export default function EmployeesPage() {
   const [thirtyDaysAgoTime, setThirtyDaysAgoTime] = useState<number | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setThirtyDaysAgoTime(Date.now() - 30 * 24 * 60 * 60 * 1000);
   }, []);
 
