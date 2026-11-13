@@ -305,12 +305,31 @@ export async function PATCH(req: Request) {
       if (body.locationId) orgUpdate.location_id = body.locationId;
       if (body.costCenterId) orgUpdate.cost_center_id = body.costCenterId;
 
-      await admin
+      const { data: existingOrg } = await admin
         .from("org_assignments")
-        .update(orgUpdate)
+        .select("id")
         .eq("employee_id", body.id)
         .eq("company_id", company.id)
-        .eq("is_primary", true);
+        .eq("is_primary", true)
+        .limit(1);
+
+      if (existingOrg && existingOrg.length > 0) {
+        await admin
+          .from("org_assignments")
+          .update(orgUpdate)
+          .eq("id", existingOrg[0].id);
+      } else {
+        await admin.from("org_assignments").insert({
+          company_id: company.id,
+          employee_id: body.id,
+          department_id: body.departmentId ?? null,
+          position_id: body.positionId ?? null,
+          location_id: body.locationId ?? null,
+          cost_center_id: body.costCenterId ?? null,
+          is_primary: true,
+          effective_from: new Date().toISOString().slice(0, 10),
+        });
+      }
     }
 
     if (body.baseSalary !== undefined || body.siSalaryBase !== undefined) {

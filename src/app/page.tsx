@@ -14,6 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { ErrorRetry, SkeletonBlock } from "@/components/ui/StateViews";
+import UpcomingEventsWidget from "@/components/dashboard/UpcomingEventsWidget";
 import { formatCurrencyVi, formatDateVi, translateEnumVi } from "@/lib/i18n/format";
 
 interface DashboardPayload {
@@ -54,6 +55,19 @@ interface DashboardPayload {
     contract_no: string;
     effective_to: string;
     employees: { employee_code: string; full_name: string } | null;
+  }>;
+  upcomingEvents?: Array<{
+    id: string;
+    type: "OVERDUE" | "CONTRACT" | "LEAVE" | "MATERNITY" | "BIRTHDAY" | "PROBATION";
+    title: string;
+    subtitle: string;
+    dateStr: string;
+    monthLabel: string;
+    dayLabel: string;
+    daysDiff: number;
+    dueText: string;
+    category: "OVERDUE" | "NEXT_7_DAYS" | "NEXT_30_DAYS" | "AFTER_30_DAYS";
+    badgeColor: "rose" | "pink" | "green" | "blue" | "amber" | "slate";
   }>;
 }
 
@@ -218,6 +232,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Widget Sự kiện / Công việc cần chú ý cho Quản lý */}
+        <UpcomingEventsWidget events={data.upcomingEvents} />
+
         <Link
           href="/approvals"
           className="inline-flex min-h-[48px] items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
@@ -241,6 +258,9 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      {/* Widget Sự kiện / Công việc cần chú ý (Biết trước việc sắp đến hạn) */}
+      <UpcomingEventsWidget />
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500">
@@ -259,6 +279,9 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1 text-2xl font-bold text-rose-600">{em.lateToday}</div>
         </div>
+
+        {/* Widget Sự kiện / Công việc cần chú ý cho Quản lý */}
+        <UpcomingEventsWidget events={data.upcomingEvents} />
 
         <Link
           href="/approvals"

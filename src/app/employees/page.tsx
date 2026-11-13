@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users,
   Plus,
@@ -14,6 +14,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   SlidersHorizontal,
+  Upload,
+  Trash2,
+  FileText,
 } from "lucide-react";
 import { buildUtf8BomCsv } from "@/lib/integrations/csv-helper";
 import {
@@ -217,6 +220,19 @@ export default function EmployeesPage() {
   // Department / Position maps
   const deptMap = useMemo(() => new Map((orgRefs?.departments ?? []).map((d) => [d.id, d.name])), [orgRefs]);
   const posMap = useMemo(() => new Map((orgRefs?.positions ?? []).map((p) => [p.id, p.title])), [orgRefs]);
+
+  // Filtered positions based on selected department in edit/create
+  const filteredEditPositions = useMemo(() => {
+    if (!editState.departmentId) return orgRefs?.positions ?? [];
+    const matching = (orgRefs?.positions ?? []).filter((p) => p.department_id === editState.departmentId);
+    return matching.length > 0 ? matching : orgRefs?.positions ?? [];
+  }, [orgRefs, editState.departmentId]);
+
+  const filteredCreatePositions = useMemo(() => {
+    if (!formState.departmentId) return orgRefs?.positions ?? [];
+    const matching = (orgRefs?.positions ?? []).filter((p) => p.department_id === formState.departmentId);
+    return matching.length > 0 ? matching : orgRefs?.positions ?? [];
+  }, [orgRefs, formState.departmentId]);
 
   // Date threshold for new hires (hired within 30 days)
   const [thirtyDaysAgoTime, setThirtyDaysAgoTime] = useState<number | null>(null);
@@ -527,52 +543,165 @@ export default function EmployeesPage() {
     }
   }
 
-  // Sample Documents for Employee Profile
-  const sampleDocuments = useMemo(() => {
-    if (!selectedEmp) return [];
+  // Document item structure for scan vault
+  interface EmployeeDocItem {
+    id: string;
+    title: string;
+    status: "SUBMITTED" | "MISSING" | "NOT_REQUIRED";
+    submittedDate?: string;
+    scanUrl?: string;
+    fileName?: string;
+    fileSize?: string;
+    note?: string;
+  }
+
+  // Uploaded docs per employee ID
+  const [empDocs, setEmpDocs] = useState<Record<string, EmployeeDocItem[]>>({});
+
+  const getDocsForEmp = useCallback((emp: EmployeeRow): EmployeeDocItem[] => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem(`tkv_docs_${emp.id}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+
     return [
       {
-        id: "doc-1",
+        id: "doc-cccd",
         title: "Căn cước công dân gắn chip (2 mặt)",
-        status: selectedEmp.national_id_masked ? "SUBMITTED" : "MISSING",
-        submittedDate: selectedEmp.hire_date,
+        status: emp.national_id_masked ? "SUBMITTED" : "MISSING",
+        submittedDate: emp.hire_date ?? "15/08/2026",
         scanUrl: "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80",
-        note: "Đã đối chiếu bản gốc",
+        note: "Đã đối chiếu bản gốc CCCD",
+        fileName: "CCCD_HaiMat.jpg",
+        fileSize: "245 KB",
       },
       {
-        id: "doc-2",
-        title: "Hợp đồng lao động có chữ ký",
-        status: selectedEmp.active_contract ? "SUBMITTED" : "MISSING",
-        submittedDate: selectedEmp.active_contract?.effective_from ?? "—",
+        id: "doc-hdld",
+        title: "Hợp đồng lao động bản cứng có chữ ký",
+        status: emp.active_contract ? "SUBMITTED" : "MISSING",
+        submittedDate: emp.active_contract?.effective_from ?? "01/01/2026",
         scanUrl: "https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80",
-        note: selectedEmp.active_contract?.contract_no ?? "Chưa ký",
+        note: emp.active_contract?.contract_no ?? "Chưa ký hợp đồng",
+        fileName: "HopDongLaoDong_Scan.pdf",
+        fileSize: "1.2 MB",
       },
       {
-        id: "doc-3",
+        id: "doc-gksk",
         title: "Giấy khám sức khỏe định kỳ (trong 6 tháng)",
         status: "SUBMITTED",
         submittedDate: "15/08/2026",
         scanUrl: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=800&q=80",
         note: "Đủ sức khỏe làm việc loại I",
+        fileName: "GiayKhamSucKhoe_2026.pdf",
+        fileSize: "850 KB",
       },
       {
-        id: "doc-4",
+        id: "doc-syll",
+        title: "Sơ yếu lý lịch tự thuật có xác nhận địa phương",
+        status: "SUBMITTED",
+        submittedDate: emp.hire_date ?? "15/08/2026",
+        scanUrl: "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80",
+        note: "Bản sao có chứng thực",
+        fileName: "SoYeuLyLich_XacNhan.jpg",
+        fileSize: "520 KB",
+      },
+      {
+        id: "doc-bangcap",
         title: "Bằng cấp / Chứng chỉ chuyên môn",
         status: "SUBMITTED",
-        submittedDate: selectedEmp.hire_date,
+        submittedDate: emp.hire_date ?? "15/08/2026",
         scanUrl: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=800&q=80",
         note: "Đại học / Cao đẳng chính quy",
+        fileName: "BangTotNghiep.jpg",
+        fileSize: "680 KB",
       },
       {
-        id: "doc-5",
-        title: "Đăng ký người phụ thuộc giảm trừ gia cảnh",
-        status: (selectedEmp.dependent_count ?? 0) > 0 ? "SUBMITTED" : "NOT_REQUIRED",
-        submittedDate: (selectedEmp.dependent_count ?? 0) > 0 ? "01/07/2026" : "—",
-        scanUrl: "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80",
-        note: (selectedEmp.dependent_count ?? 0) > 0 ? `${selectedEmp.dependent_count} người phụ thuộc` : "Không có NPT",
+        id: "doc-bosung",
+        title: "Quyết định bổ nhiệm / Giấy tờ bổ sung khác",
+        status: "MISSING",
+        note: "Bấm tải lên để đính kèm bản scan bất kỳ lúc nào",
       },
     ];
-  }, [selectedEmp]);
+  }, []);
+
+  function handleUploadDoc(docId: string, file: File) {
+    if (!selectedEmp) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const sizeKb = Math.round(file.size / 1024);
+      const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+      const dateStr = new Date().toLocaleDateString("vi-VN");
+
+      setEmpDocs((prev) => {
+        const currentList = prev[selectedEmp.id] ?? getDocsForEmp(selectedEmp);
+        const updated = currentList.map((d) => {
+          if (d.id === docId) {
+            return {
+              ...d,
+              status: "SUBMITTED" as const,
+              submittedDate: dateStr,
+              scanUrl: dataUrl,
+              fileName: file.name,
+              fileSize: sizeStr,
+              note: `Đã lưu: ${file.name}`,
+            };
+          }
+          return d;
+        });
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem(`tkv_docs_${selectedEmp.id}`, JSON.stringify(updated));
+          } catch {}
+        }
+        return { ...prev, [selectedEmp.id]: updated };
+      });
+      setNotice(`Đã tải lên bản scan "${file.name}" thành công.`);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleDeleteDoc(docId: string) {
+    if (!selectedEmp) return;
+    setEmpDocs((prev) => {
+      const currentList = prev[selectedEmp.id] ?? getDocsForEmp(selectedEmp);
+      const updated = currentList.map((d) => {
+        if (d.id === docId) {
+          return {
+            ...d,
+            status: "MISSING" as const,
+            submittedDate: undefined,
+            scanUrl: undefined,
+            fileName: undefined,
+            fileSize: undefined,
+            note: "Chưa nộp bản sao chứng thực",
+          };
+        }
+        return d;
+      });
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(`tkv_docs_${selectedEmp.id}`, JSON.stringify(updated));
+        } catch {}
+      }
+      return { ...prev, [selectedEmp.id]: updated };
+    });
+    setNotice("Đã xóa tài liệu đính kèm.");
+  }
+
+  const currentEmpDocs = useMemo(() => {
+    if (!selectedEmp) return [];
+    return empDocs[selectedEmp.id] ?? getDocsForEmp(selectedEmp);
+  }, [selectedEmp, empDocs, getDocsForEmp]);
+
+  const submittedDocCount = currentEmpDocs.filter((d) => d.status === "SUBMITTED").length;
+  const totalRequiredDocCount = currentEmpDocs.filter((d) => d.status !== "NOT_REQUIRED").length;
+  const docCompletionRate = totalRequiredDocCount > 0 ? Math.round((submittedDocCount / totalRequiredDocCount) * 100) : 100;
 
   if (loading) {
     return (
@@ -996,6 +1125,44 @@ export default function EmployeesPage() {
                     </select>
                   </div>
                   <div>
+                    <label className="font-semibold text-slate-700">Phòng ban</label>
+                    <select
+                      value={editState.departmentId}
+                      onChange={(e) => {
+                        const newDeptId = e.target.value;
+                        const matching = (orgRefs?.positions ?? []).filter((p) => p.department_id === newDeptId);
+                        setEditState({
+                          ...editState,
+                          departmentId: newDeptId,
+                          positionId: matching[0]?.id ?? editState.positionId,
+                        });
+                      }}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      <option value="">-- Chọn phòng ban --</option>
+                      {orgRefs?.departments.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({d.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700">Chức danh / Vị trí</label>
+                    <select
+                      value={editState.positionId}
+                      onChange={(e) => setEditState({ ...editState, positionId: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold"
+                    >
+                      <option value="">-- Chọn chức danh --</option>
+                      {filteredEditPositions.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title} ({p.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="font-medium text-slate-700">Ngày sinh</label>
                     <input
                       type="date"
@@ -1121,47 +1288,141 @@ export default function EmployeesPage() {
             {/* TAB 2: DOCUMENTS CHECKLIST & SCAN VAULT */}
             {drawerTab === "DOCUMENTS" && (
               <div className="mt-5 space-y-4">
-                <div className="rounded-xl bg-amber-50/70 border border-amber-200 p-3 text-xs text-amber-900">
-                  <div className="font-bold">Bảng kiểm soát giấy tờ &amp; Kho lưu trữ bản scan</div>
-                  <div className="mt-0.5 text-slate-600">
-                    Bấm vào nút &quot;Xem bản scan&quot; để phóng to ảnh giấy tờ hồ sơ của nhân sự.
+                {/* Header progress card */}
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-950">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-slate-900 text-sm">
+                        Bảng kiểm soát giấy tờ &amp; Kho lưu trữ bản scan
+                      </div>
+                      <div className="mt-0.5 text-slate-600">
+                        {docCompletionRate === 100
+                          ? "Hồ sơ nhân sự đã nộp đầy đủ giấy tờ theo quy định pháp luật."
+                          : `Đã nộp ${submittedDocCount}/${totalRequiredDocCount} giấy tờ (${docCompletionRate}%). Bấm "Tải lên bản scan" để đính kèm và lưu trữ.`}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span
+                        className={`inline-block rounded-full px-2.5 py-1 text-xs font-bold ${
+                          docCompletionRate === 100
+                            ? "bg-emerald-200 text-emerald-900"
+                            : "bg-amber-200 text-amber-900"
+                        }`}
+                      >
+                        {docCompletionRate}% Đầy đủ
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-amber-200/60">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        docCompletionRate === 100 ? "bg-emerald-600" : "bg-amber-600"
+                      }`}
+                      style={{ width: `${docCompletionRate}%` }}
+                    />
                   </div>
                 </div>
 
+                {/* Documents List */}
                 <div className="space-y-3">
-                  {sampleDocuments.map((doc) => {
+                  {currentEmpDocs.map((doc) => {
                     const isSubmitted = doc.status === "SUBMITTED";
                     return (
                       <div
                         key={doc.id}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3.5 hover:bg-slate-50/60"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs transition hover:border-slate-300 hover:bg-slate-50/40"
                       >
-                        <div className="flex items-start gap-3">
-                          <div className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-full ${isSubmitted ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-                            {isSubmitted ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <div
+                            className={`mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${
+                              isSubmitted
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-rose-100 text-rose-700"
+                            }`}
+                          >
+                            {isSubmitted ? (
+                              <CheckCircle2 className="h-4 w-4" />
+                            ) : (
+                              <AlertTriangle className="h-4 w-4" />
+                            )}
                           </div>
-                          <div>
-                            <div className="font-bold text-slate-900 text-xs">{doc.title}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-900 text-xs sm:text-sm">
+                              {doc.title}
+                            </div>
                             <div className="mt-0.5 text-[11px] text-slate-500">
-                              {isSubmitted ? `Ngày nộp: ${doc.submittedDate} • ${doc.note}` : "Chưa nộp bản sao chứng thực"}
+                              {isSubmitted ? (
+                                <span>
+                                  Ngày nộp: <strong className="text-slate-700">{doc.submittedDate}</strong>
+                                  {doc.fileSize && ` • ${doc.fileSize}`}
+                                  {doc.fileName && (
+                                    <span className="ml-1 text-emerald-700 font-medium">({doc.fileName})</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-rose-600 font-medium">Chưa nộp bản sao chứng thực</span>
+                              )}
                             </div>
                           </div>
                         </div>
 
-                        <div>
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {isSubmitted ? (
-                            <button
-                              type="button"
-                              onClick={() => setActiveScanUrl({ title: doc.title, url: doc.scanUrl })}
-                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                              <Eye className="h-3.5 w-3.5 text-slate-500" />
-                              Xem bản scan
-                            </button>
+                            <>
+                              {doc.scanUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setActiveScanUrl({
+                                      title: doc.title,
+                                      url: doc.scanUrl!,
+                                    })
+                                  }
+                                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50"
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-slate-500" />
+                                  Xem bản scan
+                                </button>
+                              )}
+
+                              <label className="cursor-pointer inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-2xs hover:bg-slate-50">
+                                <Upload className="h-3.5 w-3.5 text-slate-400" />
+                                Thay thế
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    if (e.target.files?.[0]) handleUploadDoc(doc.id, e.target.files[0]);
+                                  }}
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDoc(doc.id)}
+                                title="Xóa tài liệu"
+                                className="rounded-xl p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
                           ) : (
-                            <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700">
-                              Còn thiếu
-                            </span>
+                            <label className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition">
+                              <Upload className="h-3.5 w-3.5" />
+                              Tải lên bản scan
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                className="hidden"
+                                onChange={(e) => {
+                                  if (e.target.files?.[0]) handleUploadDoc(doc.id, e.target.files[0]);
+                                }}
+                              />
+                            </label>
                           )}
                         </div>
                       </div>
@@ -1247,27 +1508,51 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      {/* Lightbox / Modal xem ảnh scan phóng to */}
+      {/* Lightbox / Modal xem ảnh scan phóng to & PDF */}
       {activeScanUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md">
-          <div className="relative max-h-[90vh] max-w-3xl overflow-hidden rounded-2xl bg-white p-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b">
-              <h3 className="font-bold text-slate-900 text-sm">{activeScanUrl.title}</h3>
-              <button
-                type="button"
-                onClick={() => setActiveScanUrl(null)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
+          <div className="relative max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white p-5 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                <h3 className="font-bold text-slate-900 text-sm truncate">
+                  {activeScanUrl.title}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={activeScanUrl.url}
+                  download={activeScanUrl.title}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Tải về
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setActiveScanUrl(null)}
+                  className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
-            <div className="mt-3 flex items-center justify-center overflow-auto max-h-[75vh]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={activeScanUrl.url}
-                alt={activeScanUrl.title}
-                className="rounded-lg object-contain max-h-[70vh] shadow-sm"
-              />
+
+            <div className="mt-3 flex-1 overflow-auto flex items-center justify-center p-2 bg-slate-50/50 rounded-xl max-h-[75vh]">
+              {activeScanUrl.url.startsWith("data:application/pdf") ? (
+                <iframe
+                  src={activeScanUrl.url}
+                  title={activeScanUrl.title}
+                  className="w-full h-[650px] border-0 rounded-lg shadow-sm"
+                />
+              ) : (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={activeScanUrl.url}
+                  alt={activeScanUrl.title}
+                  className="rounded-lg object-contain max-h-[72vh] max-w-full shadow-md"
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1476,29 +1761,41 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700">Phòng ban</label>
+                  <label className="font-semibold text-slate-700">Phòng ban *</label>
                   <select
+                    required
                     value={formState.departmentId}
-                    onChange={(e) => setFormState({ ...formState, departmentId: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      const newDeptId = e.target.value;
+                      const matching = (orgRefs?.positions ?? []).filter((p) => p.department_id === newDeptId);
+                      setFormState({
+                        ...formState,
+                        departmentId: newDeptId,
+                        positionId: matching[0]?.id ?? formState.positionId,
+                      });
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium"
                   >
+                    <option value="">-- Chọn phòng ban --</option>
                     {orgRefs?.departments.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.name}
+                        {d.name} ({d.code})
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700">Chức danh</label>
+                  <label className="font-semibold text-slate-700">Chức danh / Vị trí *</label>
                   <select
+                    required
                     value={formState.positionId}
                     onChange={(e) => setFormState({ ...formState, positionId: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium"
                   >
-                    {orgRefs?.positions.map((p) => (
+                    <option value="">-- Chọn chức danh --</option>
+                    {filteredCreatePositions.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.title}
+                        {p.title} ({p.code})
                       </option>
                     ))}
                   </select>
