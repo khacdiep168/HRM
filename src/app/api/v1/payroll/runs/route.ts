@@ -164,11 +164,28 @@ export async function GET(req: Request) {
           .filter((run) => results.some((r) => r.payroll_run_id === run.id))
           .map((run) => {
             const own = results.find((r) => r.payroll_run_id === run.id);
+            // SEC-02 resolution: Sanitize all enterprise-level aggregate financial fields
+            // so regular employees cannot inspect the company's total payroll outlay
+            const sanitized = { ...run };
+            delete sanitized.total_gross_amount;
+            delete sanitized.total_net_amount;
+            delete sanitized.total_company_cost;
+            delete sanitized.total_employer_cost;
+            delete sanitized.total_pit;
+            delete sanitized.total_insurance;
+            delete sanitized.total_base_salary;
+            delete sanitized.total_ot_amount;
+            delete sanitized.total_allowance_amount;
+            delete sanitized.total_deduction_amount;
+
             return {
-              ...run,
+              ...sanitized,
               total_employees: 1,
               total_gross: Number(own?.gross_income ?? 0),
               total_net_payable: Number(own?.net_payable ?? 0),
+              total_gross_amount: null,
+              total_net_amount: null,
+              total_company_cost: null,
             };
           });
 

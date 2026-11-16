@@ -15,6 +15,40 @@ export interface LegalRuleConfig {
 }
 
 /**
+ * Statutory rules currently in force (Vietnam Standard - Resolution 954/2020/UBTVQH14 & Decrees 73/74/2024):
+ * - BHXH Reference / Base Salary: 2,340,000 VND (Decree 73/2024/ND-CP)
+ * - Regional Min Wage: Decree 74/2024/ND-CP (Region III Ben Cau Tay Ninh = 3,860,000 VND)
+ * - Self deduction: 11,000,000 VND/month
+ * - Dependent deduction: 4,400,000 VND/month
+ * - Lunch cash exempt cap: 730,000 VND/month (Circular 26/2016/TT-BLDTBXH)
+ * - Standard 7-bracket progressive PIT scale (Law on Personal Income Tax No. 04/2007/QH12)
+ */
+export const VN_2020_CURRENT_RULES: LegalRuleConfig = {
+  ruleVersion: "VN-2020-CURRENT",
+  bhxhReferenceLevel: new Decimal("2340000"),
+  bhxhBhytCapMultiplier: 20,
+  bhtnCapMultiplier: 20,
+  regionalMinWage: {
+    I: new Decimal("4960000"),
+    II: new Decimal("4410000"),
+    III: new Decimal("3860000"),
+    IV: new Decimal("3450000"),
+  },
+  selfDeduction: new Decimal("11000000"),
+  dependentDeduction: new Decimal("4400000"),
+  lunchCashExemptCap: new Decimal("730000"),
+  pitBrackets: [
+    { upTo: new Decimal("5000000"), rate: new Decimal("0.05") },
+    { upTo: new Decimal("10000000"), rate: new Decimal("0.10") },
+    { upTo: new Decimal("18000000"), rate: new Decimal("0.15") },
+    { upTo: new Decimal("32000000"), rate: new Decimal("0.20") },
+    { upTo: new Decimal("52000000"), rate: new Decimal("0.25") },
+    { upTo: new Decimal("80000000"), rate: new Decimal("0.30") },
+    { upTo: null, rate: new Decimal("0.35") },
+  ],
+};
+
+/**
  * Legal parameters effective 11/2026 in Vietnam (DOC-09 Rule Version VN-2026-H2):
  * - BHXH Reference Level: 2,530,000 VND (Decree 161/2026/ND-CP from 01/07/2026)
  * - Regional Min Wage: Decree 293/2025/ND-CP (Region III Ben Cau Tay Ninh = 4,140,000 VND)

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Settings, ShieldCheck } from "lucide-react";
+import { Plus, Settings, ShieldCheck, UserCheck } from "lucide-react";
+import Link from "next/link";
 import { FEATURE_FLAGS } from "@/lib/config/feature-flags";
 import { formatDateVi } from "@/lib/i18n/format";
 import { EmptyState, ErrorRetry, SkeletonBlock } from "@/components/ui/StateViews";
@@ -96,14 +97,23 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
-          <Settings className="h-5 w-5 text-amber-600" />
-          Quản trị Hệ thống &amp; Tham số Pháp luật
-        </h1>
-        <p className="text-xs text-slate-500">
-          Cấu hình tham số BHXH / Thuế TNCN / Lương tối thiểu theo ngày hiệu lực và trạng thái bảo mật.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
+            <Settings className="h-5 w-5 text-amber-600" />
+            Quản trị Hệ thống &amp; Tham số Pháp luật
+          </h1>
+          <p className="text-xs text-slate-500">
+            Cấu hình tham số BHXH / Thuế TNCN / Lương tối thiểu theo ngày hiệu lực và trạng thái bảo mật.
+          </p>
+        </div>
+        <Link
+          href="/admin/users"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800"
+        >
+          <UserCheck className="h-4 w-4 text-amber-400" />
+          Quản lý Người dùng &amp; Phân quyền →
+        </Link>
       </div>
 
       {msg && (

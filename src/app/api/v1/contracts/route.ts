@@ -66,9 +66,55 @@ export async function GET() {
 
     if (error) throw error;
 
+    let fullContracts = contracts ?? [];
+
+    // BUS-01 Resolution: Automatically backfill missing contracts for all active employees
+    if (isHrOrExec && employees && employees.length > 0 && ctx.userId) {
+      const existingEmpIds = new Set(fullContracts.map((c) => c.employee_id));
+      const missingEmps = employees.filter((e) => !existingEmpIds.has(e.id));
+
+      if (missingEmps.length > 0) {
+        const { data: comp } = await admin.from("companies").select("id").limit(1).single();
+        const companyId = comp?.id ?? "10000000-0000-4000-8000-000000000001";
+
+        const { data: laborContracts } = await admin
+          .from("labor_contracts")
+          .select("employee_id, contract_code, contract_type, start_date")
+          .in("employee_id", missingEmps.map((e) => e.id));
+        const lcMap = new Map((laborContracts ?? []).map((lc) => [lc.employee_id, lc]));
+
+        const newContractsToInsert = missingEmps.map((emp) => {
+          const lc = lcMap.get(emp.id);
+          const cType = lc?.contract_type === "PROBATION" ? "PROBATION" : "FIXED_TERM";
+          const startDate = lc?.start_date || "2026-01-01";
+          const endDate = cType === "PROBATION" ? "2026-03-01" : "2027-12-31";
+          return {
+            company_id: companyId,
+            employee_id: emp.id,
+            contract_no: lc?.contract_code || `HD-${emp.employee_code}-2026`,
+            contract_type: cType,
+            signed_date: startDate,
+            effective_from: startDate,
+            effective_to: endDate,
+            status: "ACTIVE",
+            created_by: ctx.userId,
+          };
+        });
+
+        const { data: inserted, error: insErr } = await admin
+          .from("contracts")
+          .upsert(newContractsToInsert, { onConflict: "company_id, contract_no" })
+          .select("*, employees(employee_code, full_name), contract_terms(work_hours_per_day, work_days_per_week, probation_rate, notice_days)");
+
+        if (!insErr && inserted) {
+          fullContracts = [...fullContracts, ...inserted];
+        }
+      }
+    }
+
     return NextResponse.json({
       data: {
-        contracts: contracts ?? [],
+        contracts: fullContracts,
         employees: employees ?? [],
         bankAccounts: (bankAccounts ?? []).map((b) => ({
           ...b,

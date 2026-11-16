@@ -98,19 +98,72 @@ export async function GET(req: Request) {
       });
     }
 
-    // 2. Fetch employees
-    const { data: emps, error: empErr } = await admin
+    // 2. Fetch employees with strict RBAC scope enforcement (SEC-01 resolution)
+    const isAttendanceAdmin = ctx.roles.some((r) =>
+      ["SUPER_ADMIN", "HR_ADMIN", "HR_STAFF", "ACCOUNTANT", "DIRECTOR", "AUDITOR"].includes(r)
+    );
+    const isDeptManager = ctx.roles.includes("DEPARTMENT_MANAGER");
+
+    let empQuery = admin
       .from("employees")
       .select("id, employee_code, full_name, employment_status, org_assignments!org_assignments_employee_id_fkey(department_id, is_primary)")
       .order("employee_code");
+
+    if (!isAttendanceAdmin) {
+      if (isDeptManager && ctx.employeeId) {
+        // Manager can see their own department's employees
+        const { data: managedDepts } = await admin
+          .from("departments")
+          .select("id")
+          .eq("manager_employee_id", ctx.employeeId);
+        const managedDeptIds = (managedDepts ?? []).map((d) => d.id);
+
+        if (managedDeptIds.length > 0) {
+          const { data: deptAss } = await admin
+            .from("org_assignments")
+            .select("employee_id")
+            .in("department_id", managedDeptIds);
+          const deptEmpIds = Array.from(new Set([ctx.employeeId, ...(deptAss ?? []).map((a) => a.employee_id)]));
+          empQuery = empQuery.in("id", deptEmpIds);
+        } else {
+          empQuery = empQuery.eq("id", ctx.employeeId);
+        }
+      } else if (ctx.employeeId) {
+        // Normal employee: strict self-only scope (prevents cross-employee attendance/privacy leaks)
+        empQuery = empQuery.eq("id", ctx.employeeId);
+      } else {
+        return NextResponse.json({
+          data: {
+            year,
+            month,
+            days,
+            rows: [],
+          },
+        });
+      }
+    }
+
+    const { data: emps, error: empErr } = await empQuery;
     if (empErr) throw empErr;
+
+    const visibleEmpIds = (emps ?? []).map((e) => e.id);
+    if (visibleEmpIds.length === 0) {
+      return NextResponse.json({
+        data: {
+          year,
+          month,
+          days,
+          rows: [],
+        },
+      });
+    }
 
     // Fetch departments map
     const { data: depts } = await admin.from("departments").select("id, code, name");
     const deptMap = new Map<string, string>();
     (depts ?? []).forEach((d) => deptMap.set(d.id, d.name));
 
-    // 3. Fetch attendance events, sessions, exceptions, leaves, OT for month
+    // 3. Fetch attendance events, sessions, exceptions, leaves, OT for month (scoped to visible employees)
     const [
       { data: rawEvents },
       { data: sessions },
@@ -121,27 +174,32 @@ export async function GET(req: Request) {
       admin
         .from("attendance_raw_events")
         .select("employee_id, event_time, direction")
+        .in("employee_id", visibleEmpIds)
         .gte("event_time", `${startDateStr}T00:00:00Z`)
         .lte("event_time", `${endDateStr}T23:59:59Z`),
       admin
         .from("attendance_sessions")
         .select("employee_id, work_date, worked_hours, status")
+        .in("employee_id", visibleEmpIds)
         .gte("work_date", startDateStr)
         .lte("work_date", endDateStr),
       admin
         .from("attendance_exceptions")
         .select("employee_id, work_date, exception_type, status, explanation_note")
+        .in("employee_id", visibleEmpIds)
         .gte("work_date", startDateStr)
         .lte("work_date", endDateStr),
       admin
         .from("leave_requests")
         .select("employee_id, start_date, end_date, status, leave_types(code, name)")
+        .in("employee_id", visibleEmpIds)
         .eq("status", "APPROVED")
         .lte("start_date", endDateStr)
         .gte("end_date", startDateStr),
       admin
         .from("overtime_requests")
         .select("employee_id, work_date, requested_hours, status")
+        .in("employee_id", visibleEmpIds)
         .eq("status", "APPROVED")
         .gte("work_date", startDateStr)
         .lte("work_date", endDateStr),

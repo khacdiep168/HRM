@@ -27,6 +27,12 @@ import {
   CheckSquare,
   ReceiptText,
   Settings,
+  UserCheck,
+  KeyRound,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { FEATURE_FLAGS } from "@/lib/config/feature-flags";
 import { getSupabaseBrowserAuthClient } from "@/lib/supabase/client";
@@ -139,6 +145,12 @@ const NAV_GROUPS: NavGroup[] = [
     title: "Quản trị",
     items: [
       {
+        href: "/admin/users",
+        label: "Người dùng & Phân quyền",
+        icon: UserCheck,
+        roles: ["SUPER_ADMIN", "HR_ADMIN", "DIRECTOR", "ACCOUNTANT"],
+      },
+      {
         href: "/admin",
         label: "Cài đặt & Tham số",
         icon: Settings,
@@ -160,6 +172,55 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [me, setMe] = useState<MeState | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Change Password Modal State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdSuccess, setPwdSuccess] = useState<string | null>(null);
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwdError(null);
+    setPwdSuccess(null);
+    if (newPassword.length < 6) {
+      setPwdError("Mật khẩu mới phải có tối thiểu 6 ký tự.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwdError("Mật khẩu xác nhận không khớp.");
+      return;
+    }
+    setPwdSubmitting(true);
+    try {
+      const res = await fetch("/api/v1/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setPwdError(json.error?.message ?? "Đổi mật khẩu thất bại.");
+        return;
+      }
+      setPwdSuccess("Đổi mật khẩu thành công!");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => {
+        setShowPasswordModal(false);
+        setPwdSuccess(null);
+      }, 1500);
+    } catch {
+      setPwdError("Lỗi kết nối máy chủ.");
+    } finally {
+      setPwdSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     if (pathname === "/login") return;
@@ -343,15 +404,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   {me.user.roles.join(", ")}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                title="Đăng xuất"
-                aria-label="Đăng xuất"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:bg-slate-800 hover:text-white"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setPwdError(null);
+                    setPwdSuccess(null);
+                    setShowPasswordModal(true);
+                  }}
+                  title="Đổi mật khẩu"
+                  aria-label="Đổi mật khẩu"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  title="Đăng xuất"
+                  aria-label="Đăng xuất"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -416,6 +495,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
                 <button
                   type="button"
+                  onClick={() => {
+                    setCurrentPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setPwdError(null);
+                    setPwdSuccess(null);
+                    setShowPasswordModal(true);
+                  }}
+                  title="Đổi mật khẩu tài khoản"
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-amber-700"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-amber-600" />
+                  <span className="hidden sm:inline">Đổi pass</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handleSignOut}
                   className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-100"
                 >
@@ -431,6 +526,115 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      {/* Modal: Đổi Mật Khẩu Cá Nhân */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                  <KeyRound className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Đổi Mật Khẩu Cá Nhân</h3>
+                  <p className="text-[11px] text-slate-500">Cập nhật mật khẩu bảo mật tài khoản</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPasswordModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {pwdError && (
+              <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 p-2.5 text-xs text-red-700">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{pwdError}</span>
+              </div>
+            )}
+            {pwdSuccess && (
+              <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 p-2.5 text-xs text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{pwdSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} className="mt-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700">
+                  Mật khẩu hiện tại <span className="text-red-500">*</span>
+                </label>
+                <div className="relative mt-1">
+                  <input
+                    type={showPasswords ? "text" : "password"}
+                    required
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu bạn đang dùng"
+                    className="w-full rounded-xl border border-slate-300 py-2 pl-3 pr-10 text-xs text-slate-900 focus:border-amber-500 focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswords(!showPasswords)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700">
+                  Mật khẩu mới <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type={showPasswords ? "text" : "password"}
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Tối thiểu 6 ký tự"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700">
+                  Xác nhận mật khẩu mới <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type={showPasswords ? "text" : "password"}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Nhập lại mật khẩu mới"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={pwdSubmitting}
+                  className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {pwdSubmitting ? "Đang xử lý..." : "Cập nhật mật khẩu"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Mobile Bottom Quick Bar (44px+ touch targets) */}
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white/95 backdrop-blur-md lg:hidden">

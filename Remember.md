@@ -28,5 +28,11 @@
 - **Bước 4 (UX, StateViews & i18n):** `COMPLETED` (Skeleton/Empty/Error states, standard Vietnamese formatting, 390px mobile responsiveness).
 - **Bước 5 (Data Privacy & Security Scoping):** `COMPLETED` (Server-side RBAC scoping, PII protection, audit trail, rate limit, anti-buddy punch).
 - **Bước 6 (Simulation & Verification):** `COMPLETED` (`scripts/seed-enterprise-50.mjs` with 50 staff & 3 months data, 56/56 automated tests passing, `docs/USER_GUIDE.md`, `docs/CHANGELOG.md`).
+- **Bước 7 (User Management, RBAC Assignment & Password Controls):** `COMPLETED` (16/11/2026):
+  - API `/api/v1/admin/users`: Tạo User Supabase Auth, liên kết Employee, gán Role RBAC (`SUPER_ADMIN`, `HR_ADMIN`, `DIRECTOR`, `ACCOUNTANT`, `DEPARTMENT_MANAGER`, `HR_STAFF`, `EMPLOYEE`, `AUDITOR`), đặt lại mật khẩu, khóa/mở khóa tài khoản.
+  - API `/api/v1/auth/change-password`: Cho phép người dùng tự đổi mật khẩu cá nhân với xác thực mật khẩu hiện tại.
+  - Trang `/admin/users`: Giao diện quản lý người dùng, tìm kiếm, lọc theo vai trò/trạng thái, modal tạo user, modal phân quyền vai trò đa chọn, modal đổi mật khẩu.
+  - Header & Sidebar `AppShell`: Nút "Đổi pass" và Modal đổi mật khẩu nhanh cho người dùng đang đăng nhập.
+
 
 

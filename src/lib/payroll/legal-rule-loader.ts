@@ -1,6 +1,11 @@
 import Decimal from "decimal.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { VN_2026_H2_RULES, type LegalRuleConfig, type RegionCode } from "./decimal-engine";
+import {
+  VN_2020_CURRENT_RULES,
+  VN_2026_H2_RULES,
+  type LegalRuleConfig,
+  type RegionCode,
+} from "./decimal-engine";
 
 export interface LegalRuleRow {
   rule_code: string;
@@ -29,16 +34,23 @@ export function buildLegalRuleConfigFromRows(
     return VN_2026_H2_RULES;
   }
 
+  // Base fallback matches designated ruleVersion if specified
+  const targetVersion = activeRows.find((r) => r.parameters?.ruleVersion)?.parameters?.ruleVersion;
+  const baseRules = targetVersion === "VN-2020-CURRENT" ? VN_2020_CURRENT_RULES : VN_2026_H2_RULES;
+
   let config: LegalRuleConfig = {
-    ...VN_2026_H2_RULES,
-    regionalMinWage: { ...VN_2026_H2_RULES.regionalMinWage },
-    pitBrackets: [...VN_2026_H2_RULES.pitBrackets],
+    ...baseRules,
+    regionalMinWage: { ...baseRules.regionalMinWage },
+    pitBrackets: [...baseRules.pitBrackets],
   };
 
   for (const row of activeRows) {
     const p = row.parameters ?? {};
     if (p.ruleVersion && typeof p.ruleVersion === "string") {
       config.ruleVersion = p.ruleVersion;
+      if (p.ruleVersion === "VN-2020-CURRENT" && !p.pitBrackets) {
+        config.pitBrackets = [...VN_2020_CURRENT_RULES.pitBrackets];
+      }
     }
     if (p.bhxhReferenceLevel !== undefined) {
       config.bhxhReferenceLevel = new Decimal(String(p.bhxhReferenceLevel));
@@ -51,6 +63,12 @@ export function buildLegalRuleConfigFromRows(
     }
     if (p.lunchCashExemptCap !== undefined) {
       config.lunchCashExemptCap = new Decimal(String(p.lunchCashExemptCap));
+    }
+    if (Array.isArray(p.pitBrackets)) {
+      config.pitBrackets = p.pitBrackets.map((b: { upTo?: unknown; rate: unknown }) => ({
+        upTo: b.upTo !== null && b.upTo !== undefined ? new Decimal(String(b.upTo)) : null,
+        rate: new Decimal(String(b.rate)),
+      }));
     }
     if (p.regionalMinWage && typeof p.regionalMinWage === "object") {
       const rmw = p.regionalMinWage as Partial<Record<RegionCode, string | number>>;

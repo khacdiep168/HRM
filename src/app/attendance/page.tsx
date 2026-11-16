@@ -17,6 +17,8 @@ import {
   Download,
   Calendar,
   Table,
+  ShieldCheck,
+  Check,
 } from "lucide-react";
 import { DEVICE_STATUS_LABELS, labelOf } from "@/lib/i18n/vi-labels";
 import { buildUtf8BomCsv, parseCsvText } from "@/lib/integrations/csv-helper";
@@ -103,6 +105,8 @@ export default function AttendancePage() {
   const [checkinMsg, setCheckinMsg] = useState<string | null>(null);
   const [checkinErr, setCheckinErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showPdplPrompt, setShowPdplPrompt] = useState(false);
+  const [pdplGranting, setPdplGranting] = useState(false);
 
   // Device sync / test scan
   const [syncDeviceId, setSyncDeviceId] = useState("");
@@ -346,9 +350,15 @@ export default function AttendancePage() {
       });
       const json = await res.json();
       if (!res.ok) {
+        if (json.error?.code === "CONSENT_REQUIRED") {
+          setShowPdplPrompt(true);
+          setCheckinErr("Bạn cần xác nhận đồng thuận thu thập vị trí GPS theo Nghị định 13/2023/NĐ-CP để chấm công.");
+          return;
+        }
         setCheckinErr(json.error?.message ?? "Chấm công GPS thất bại.");
         return;
       }
+      setShowPdplPrompt(false);
       const d = json.data;
       setCheckinMsg(
         `Đã ghi nhận ${d.direction === "IN" ? "VÀO CA" : "RA CA"} (khoảng cách ${d.distanceMeters}m — ${d.isWithinGeofence ? "Hợp lệ trong vùng" : "Ngoài vùng Geofence"}).`
@@ -357,6 +367,31 @@ export default function AttendancePage() {
       setReloadTick((t) => t + 1);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleGrantPdplAndCheckin() {
+    setPdplGranting(true);
+    setCheckinErr(null);
+    try {
+      const grantRes = await fetch("/api/v1/privacy/consents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purposeCode: "ATTENDANCE_GPS",
+          policyVersion: "PDPL-TKV-2026.1",
+        }),
+      });
+      if (grantRes.ok) {
+        setShowPdplPrompt(false);
+        const fakeEvt = { preventDefault: () => {} } as React.FormEvent;
+        await handleGpsCheckin(fakeEvt);
+      } else {
+        const gj = await grantRes.json();
+        setCheckinErr(gj.error?.message ?? "Không thể cấp quyền đồng thuận PDPL.");
+      }
+    } finally {
+      setPdplGranting(false);
     }
   }
 
@@ -886,6 +921,28 @@ export default function AttendancePage() {
               </button>
             </div>
             <form onSubmit={handleGpsCheckin} className="mt-4 space-y-3 text-xs">
+              {showPdplPrompt && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 shadow-xs">
+                  <div className="flex items-start gap-2">
+                    <ShieldCheck className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-semibold text-xs">Xác nhận đồng thuận vị trí GPS (NĐ 13/2023/NĐ-CP)</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                        Chấm công GPS cần bạn xác nhận thu thập tọa độ vị trí làm việc tại Thế Kỷ Vàng.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleGrantPdplAndCheckin}
+                        disabled={pdplGranting}
+                        className="mt-2 inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        <Check className="h-3 w-3" />
+                        {pdplGranting ? "Đang ghi nhận..." : "Tôi đồng ý & Chấm công ngay"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {checkinErr && (
                 <div className="rounded-xl bg-red-50 p-2.5 text-red-700">{checkinErr}</div>
               )}
