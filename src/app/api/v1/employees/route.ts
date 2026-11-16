@@ -401,18 +401,6 @@ export async function PATCH(req: Request) {
         },
         { onConflict: "company_id, rule_code, effective_from" }
       );
-
-      const { data: userRow } = await admin
-        .from("users")
-        .select("id")
-        .eq("employee_id", body.id)
-        .maybeSingle();
-
-      if (userRow?.id) {
-        await admin.auth.admin.updateUserById(userRow.id, {
-          user_metadata: { avatar_url: body.avatarUrl || null },
-        });
-      }
     }
 
     await admin.from("audit_events").insert({

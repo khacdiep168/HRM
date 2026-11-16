@@ -45,28 +45,31 @@ export async function GET() {
       employment_status: string;
     } | null = null;
 
-    let userAvatarUrl: string | null = (user?.user_metadata?.avatar_url as string | undefined) ?? null;
+    let userAvatarUrl: string | null = null;
+
+    // Fetch avatar registry from legal_rule_registry (safe database storage, never in JWT cookie)
+    const { data: avatarRule } = await admin
+      .from("legal_rule_registry")
+      .select("parameters")
+      .eq("rule_code", "EMPLOYEE_AVATARS")
+      .maybeSingle();
+
+    const avatarsMap = (avatarRule?.parameters as Record<string, string>) ?? {};
 
     // Check employee profile & avatar registry
     if (ctx.employeeId) {
-      const [{ data: emp }, { data: avatarRule }] = await Promise.all([
-        admin
-          .from("employees")
-          .select("id, employee_code, full_name, work_email, employment_status")
-          .eq("id", ctx.employeeId)
-          .maybeSingle(),
-        admin
-          .from("legal_rule_registry")
-          .select("parameters")
-          .eq("rule_code", "EMPLOYEE_AVATARS")
-          .maybeSingle(),
-      ]);
+      const { data: emp } = await admin
+        .from("employees")
+        .select("id, employee_code, full_name, work_email, employment_status")
+        .eq("id", ctx.employeeId)
+        .maybeSingle();
 
       employeeProfile = emp ?? null;
-      if (!userAvatarUrl && avatarRule?.parameters) {
-        const avatarsMap = avatarRule.parameters as Record<string, string>;
-        userAvatarUrl = avatarsMap[ctx.employeeId] ?? null;
-      }
+      userAvatarUrl = avatarsMap[ctx.employeeId] ?? null;
+    }
+
+    if (!userAvatarUrl && ctx.userId) {
+      userAvatarUrl = avatarsMap[ctx.userId] ?? null;
     }
 
     // Get company logo and name for header/sidebar branding
