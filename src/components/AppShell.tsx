@@ -44,7 +44,12 @@ interface MeState {
     fullName: string;
     roles: string[];
     mfaVerified: boolean;
+    avatarUrl?: string | null;
   };
+  company?: {
+    legalName: string;
+    logoUrl?: string | null;
+  } | null;
 }
 
 interface NavItem {
@@ -238,7 +243,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               fullName: d.employeeProfile?.full_name ?? d.email ?? "Người dùng",
               roles: Array.isArray(d.roles) ? d.roles : ["EMPLOYEE"],
               mfaVerified: Boolean(d.mfaVerified),
+              avatarUrl: d.avatarUrl ?? null,
             },
+            company: d.company ?? null,
           });
         } else {
           setMe({ authenticated: false });
@@ -329,14 +336,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={() => setMobileOpen(false)}
           className="flex items-center gap-3"
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 text-sm font-extrabold text-white shadow-sm">
-            TKV
-          </div>
-          <div>
-            <div className="text-sm font-bold tracking-tight text-white">
-              THẾ KỶ VÀNG
+          {me?.company?.logoUrl ? (
+            <img
+              src={me.company.logoUrl}
+              alt="Logo Công ty"
+              className="h-9 w-9 rounded-xl object-contain bg-white p-1 shadow-xs border border-slate-700"
+            />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 text-sm font-extrabold text-white shadow-sm">
+              TKV
             </div>
-            <div className="text-[11px] text-slate-400">HRM • Tây Ninh</div>
+          )}
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold tracking-tight text-white">
+              {me?.company?.legalName ?? "THẾ KỶ VÀNG"}
+            </div>
+            <div className="text-[11px] text-slate-400">HRM Enterprise • Tây Ninh</div>
           </div>
         </Link>
         <button
@@ -396,12 +411,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {me?.user && (
           <div className="rounded-xl bg-slate-900/90 p-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate text-xs font-semibold text-white">
-                  {me.user.fullName}
-                </div>
-                <div className="truncate text-[11px] text-amber-400">
-                  {me.user.roles.join(", ")}
+              <div className="flex items-center gap-2.5 min-w-0">
+                {me.user.avatarUrl ? (
+                  <img
+                    src={me.user.avatarUrl}
+                    alt={me.user.fullName}
+                    className="h-8 w-8 rounded-full object-cover border border-slate-700 shadow-xs shrink-0"
+                  />
+                ) : (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white shadow-xs">
+                    {me.user.fullName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold text-white">
+                    {me.user.fullName}
+                  </div>
+                  <div className="truncate text-[11px] text-amber-400">
+                    {me.user.roles.join(", ")}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
@@ -473,17 +501,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   {currentNav?.label ?? "THẾ KỶ VÀNG HRM"}
                 </div>
                 <div className="hidden text-[11px] text-slate-500 sm:block">
-                  Công ty TNHH Thương mại Thế Kỷ Vàng • Tây Ninh
+                  {me?.company?.legalName ?? "Công ty TNHH Thương mại Thế Kỷ Vàng"} • Tây Ninh
                 </div>
               </div>
             </div>
 
             {me?.user && (
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white">
-                    {me.user.fullName.charAt(0).toUpperCase()}
-                  </div>
+                <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 shadow-xs">
+                  {me.user.avatarUrl ? (
+                    <img
+                      src={me.user.avatarUrl}
+                      alt={me.user.fullName}
+                      className="h-7 w-7 rounded-full object-cover border border-slate-300 shadow-xs shrink-0"
+                    />
+                  ) : (
+                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white shadow-xs shrink-0">
+                      {me.user.fullName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div className="hidden text-left sm:block">
                     <div className="text-xs font-semibold leading-none text-slate-900">
                       {me.user.fullName}

@@ -53,7 +53,7 @@ export async function GET() {
     if (error) throw error;
 
     const empIds = (data ?? []).map((e) => e.id);
-    const [contactsRes, contractsRes, salariesRes, taxRes, banksRes] =
+    const [contactsRes, contractsRes, salariesRes, taxRes, banksRes, avatarRes] =
       empIds.length > 0
         ? await Promise.all([
             admin
@@ -79,8 +79,13 @@ export async function GET() {
               .select("employee_id, bank_name, account_last4")
               .in("employee_id", empIds)
               .eq("is_primary", true),
+            admin
+              .from("legal_rule_registry")
+              .select("parameters")
+              .eq("rule_code", "EMPLOYEE_AVATARS")
+              .maybeSingle(),
           ])
-        : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+        : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: null }];
 
     const contactMap = new Map((contactsRes.data ?? []).map((c) => [c.employee_id, c]));
     const contractMap = new Map((contractsRes.data ?? []).map((c) => [c.employee_id, c]));
@@ -90,6 +95,7 @@ export async function GET() {
     }
     const taxMap = new Map((taxRes.data ?? []).map((t) => [t.employee_id, t]));
     const bankMap = new Map((banksRes.data ?? []).map((b) => [b.employee_id, b]));
+    const avatarsMap = (avatarRes?.data?.parameters as Record<string, string>) ?? {};
 
     const enrichedRows = (data ?? []).map((emp) => {
       const contact = contactMap.get(emp.id);
@@ -105,6 +111,7 @@ export async function GET() {
 
       return {
         ...safeEmp,
+        avatar_url: avatarsMap[emp.id] ?? null,
         national_id_masked: emp.national_id_last4 ? `********${emp.national_id_last4}` : "—",
         phone_masked: contact?.phone_last4 ? `******${contact.phone_last4}` : "—",
         personal_email: contact?.personal_email ?? null,
@@ -240,6 +247,7 @@ const updateEmployeeSchema = z.object({
   positionId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
   costCenterId: z.string().uuid().optional(),
+  avatarUrl: z.string().optional().nullable(),
 });
 
 export async function PATCH(req: Request) {
@@ -365,6 +373,46 @@ export async function PATCH(req: Request) {
         self_deduction_eligible: true,
         dependent_count: body.dependentCount,
       });
+    }
+
+    if (body.avatarUrl !== undefined) {
+      const { data: currRule } = await admin
+        .from("legal_rule_registry")
+        .select("parameters")
+        .eq("company_id", company.id)
+        .eq("rule_code", "EMPLOYEE_AVATARS")
+        .maybeSingle();
+
+      const avatars = (currRule?.parameters as Record<string, string>) ?? {};
+      if (body.avatarUrl) {
+        avatars[body.id] = body.avatarUrl;
+      } else {
+        delete avatars[body.id];
+      }
+
+      await admin.from("legal_rule_registry").upsert(
+        {
+          company_id: company.id,
+          rule_code: "EMPLOYEE_AVATARS",
+          effective_from: "2026-01-01",
+          status: "APPROVED",
+          source_citation: "Kho lưu trữ ảnh thẻ nhân sự TKV",
+          parameters: avatars,
+        },
+        { onConflict: "company_id, rule_code, effective_from" }
+      );
+
+      const { data: userRow } = await admin
+        .from("users")
+        .select("id")
+        .eq("employee_id", body.id)
+        .maybeSingle();
+
+      if (userRow?.id) {
+        await admin.auth.admin.updateUserById(userRow.id, {
+          user_metadata: { avatar_url: body.avatarUrl || null },
+        });
+      }
     }
 
     await admin.from("audit_events").insert({

@@ -17,6 +17,7 @@ import {
   Upload,
   Trash2,
   FileText,
+  Camera,
 } from "lucide-react";
 import { buildUtf8BomCsv } from "@/lib/integrations/csv-helper";
 import {
@@ -39,6 +40,7 @@ interface EmployeeRow {
   id: string;
   employee_code: string;
   full_name: string;
+  avatar_url?: string | null;
   dob: string | null;
   gender: string | null;
   nationality: string;
@@ -87,6 +89,44 @@ const STATUS_BADGE: Record<string, string> = {
 
 const fmtVnd = (n: number) => `${Math.round(Number(n)).toLocaleString("vi-VN")} đ`;
 
+async function compressImageFile(file: File, maxDimension = 320, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(e.target?.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function EmployeesPage() {
   const [rows, setRows] = useState<EmployeeRow[]>([]);
   const [orgRefs, setOrgRefs] = useState<OrgRefs | null>(null);
@@ -118,6 +158,7 @@ export default function EmployeesPage() {
   const [formState, setFormState] = useState({
     employeeCode: "",
     fullName: "",
+    avatarUrl: "",
     dob: "",
     gender: "MALE",
     phone: "",
@@ -138,6 +179,7 @@ export default function EmployeesPage() {
   const [drawerTab, setDrawerTab] = useState<"PROFILE" | "DOCUMENTS" | "TIMELINE">("PROFILE");
   const [editState, setEditState] = useState({
     fullName: "",
+    avatarUrl: "",
     dob: "",
     gender: "MALE",
     hireDate: "",
@@ -370,6 +412,7 @@ export default function EmployeesPage() {
     setDrawerTab("PROFILE");
     setEditState({
       fullName: emp.full_name,
+      avatarUrl: emp.avatar_url ?? "",
       dob: emp.dob ?? "",
       gender: emp.gender ?? "MALE",
       hireDate: emp.hire_date ?? "",
@@ -425,6 +468,7 @@ export default function EmployeesPage() {
         body: JSON.stringify({
           ...formState,
           employeeCode: code,
+          avatarUrl: formState.avatarUrl || undefined,
           dob: formState.dob || undefined,
           phone: formState.phone || undefined,
           workEmail: formState.workEmail || undefined,
@@ -441,6 +485,7 @@ export default function EmployeesPage() {
         ...prev,
         employeeCode: "",
         fullName: "",
+        avatarUrl: "",
         dob: "",
         phone: "",
         workEmail: "",
@@ -481,6 +526,7 @@ export default function EmployeesPage() {
       const payload: Record<string, unknown> = {
         id: selectedEmp.id,
         fullName: editState.fullName,
+        avatarUrl: editState.avatarUrl,
         dob: editState.dob || null,
         gender: editState.gender || null,
         hireDate: editState.hireDate || undefined,
@@ -968,8 +1014,23 @@ export default function EmployeesPage() {
                     )}
                     {columns.name && (
                       <td className="px-4 py-3">
-                        <div className="font-bold text-slate-900">{emp.full_name}</div>
-                        <div className="text-[11px] text-slate-500">{emp.work_email ?? "—"}</div>
+                        <div className="flex items-center gap-2.5">
+                          {emp.avatar_url ? (
+                            <img
+                              src={emp.avatar_url}
+                              alt={emp.full_name}
+                              className="h-8 w-8 rounded-full object-cover border border-slate-200 shadow-xs shrink-0"
+                            />
+                          ) : (
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-[11px] font-bold text-amber-800 border border-amber-200 shrink-0">
+                              {emp.full_name.split(" ").slice(-1)[0]?.[0]?.toUpperCase() ?? "NV"}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-900 truncate">{emp.full_name}</div>
+                            <div className="text-[11px] text-slate-500 truncate">{emp.work_email ?? "—"}</div>
+                          </div>
+                        </div>
                       </td>
                     )}
                     {columns.deptPos && (
@@ -1100,6 +1161,64 @@ export default function EmployeesPage() {
             {/* TAB 1: PROFILE & LEGAL */}
             {drawerTab === "PROFILE" && (
               <form onSubmit={handleUpdateEmployee} className="mt-5 space-y-4 text-xs">
+                {/* Employee Portrait Photo / Avatar Upload */}
+                <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5">
+                  <div className="relative flex h-28 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-white shadow-xs">
+                    {editState.avatarUrl ? (
+                      <img
+                        src={editState.avatarUrl}
+                        alt="Ảnh thẻ"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-1 text-center text-slate-400">
+                        <Camera className="h-6 w-6 stroke-[1.5]" />
+                        <span className="mt-1 text-[9px] font-semibold leading-tight">Ảnh 3x4</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-slate-900 text-xs">
+                      Ảnh thẻ nhân sự (Chân dung 3x4)
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
+                      Ảnh thẻ này sẽ tự động làm Avatar của nhân viên khi đăng nhập vào hệ thống HRM.
+                    </div>
+                    <div className="mt-2.5 flex items-center gap-2">
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 shadow-xs hover:bg-slate-50">
+                        <Upload className="h-3.5 w-3.5 text-amber-600" />
+                        Tải ảnh thẻ
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const base64 = await compressImageFile(file, 300, 0.82);
+                                setEditState((prev) => ({ ...prev, avatarUrl: base64 }));
+                              } catch {
+                                setError("Không thể đọc file ảnh.");
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                      {editState.avatarUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setEditState((prev) => ({ ...prev, avatarUrl: "" }))}
+                          className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Xóa ảnh
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="font-medium text-slate-700">Họ và tên</label>
@@ -1698,6 +1817,65 @@ export default function EmployeesPage() {
               {formError && (
                 <div className="rounded-xl bg-red-50 p-3 text-red-700 font-semibold">{formError}</div>
               )}
+
+              {/* Portrait Photo Upload in Create Modal */}
+              <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <div className="relative flex h-24 w-18 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-white shadow-xs">
+                  {formState.avatarUrl ? (
+                    <img
+                      src={formState.avatarUrl}
+                      alt="Ảnh thẻ"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-1 text-center text-slate-400">
+                      <Camera className="h-5 w-5 stroke-[1.5]" />
+                      <span className="mt-0.5 text-[8px] font-semibold">3x4</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-slate-900 text-xs">
+                    Ảnh thẻ chân dung (3x4)
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Ảnh này làm avatar đại diện khi nhân viên đăng nhập.
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-xs hover:bg-slate-50">
+                      <Upload className="h-3 w-3 text-amber-600" />
+                      Chọn ảnh thẻ
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              const base64 = await compressImageFile(file, 300, 0.82);
+                              setFormState((prev) => ({ ...prev, avatarUrl: base64 }));
+                            } catch {
+                              setFormError("Không thể đọc file ảnh.");
+                            }
+                          }
+                        }}
+                      />
+                    </label>
+                    {formState.avatarUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setFormState((prev) => ({ ...prev, avatarUrl: "" }))}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Xóa
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="font-semibold text-slate-700">Mã nhân viên *</label>
